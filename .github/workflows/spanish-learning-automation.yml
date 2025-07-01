@@ -156,9 +156,18 @@ jobs:
               return None
 
           def extract_duration_from_feed(entry):
+              # iTunes 듀레이션 먼저 확인
               if hasattr(entry, 'itunes_duration'):
-                  return entry.itunes_duration
+                  duration = entry.itunes_duration
+                  # 초 단위인 경우 분:초로 변환
+                  if duration.isdigit():
+                      total_seconds = int(duration)
+                      minutes = total_seconds // 60
+                      seconds = total_seconds % 60
+                      return f"{minutes}:{seconds:02d}"
+                  return duration
               
+              # 요약에서 재생시간 추출 시도
               summary = entry.get('summary', '') + entry.get('description', '')
               duration_patterns = [
                   r'(\d+)\s*min',
@@ -203,33 +212,172 @@ jobs:
           def get_key_expressions(title, summary=""):
               content = title + " " + summary
               
-              expression_patterns = [
-                  r"'([^']+)'",
-                  r'"([^"]+)"',
-                  r'\b(caer en la trampa|perder los ahorros|hacer caso|darse cuenta|tener en cuenta|por si acaso|de vez en cuando)\b'
+              # 스페인어 핵심 표현과 한국어 뜻 사전
+              expression_dict = {
+                  # 일반적인 관용 표현
+                  'caer en la trampa': '함정에 빠지다',
+                  'perder los ahorros': '저축을 잃다',
+                  'hacer caso': '신경 쓰다, 주의를 기울이다',
+                  'darse cuenta': '깨닫다, 알아차리다',
+                  'tener en cuenta': '고려하다, 염두에 두다',
+                  'por si acaso': '혹시 모르니까',
+                  'de vez en cuando': '가끔',
+                  'estar de acuerdo': '동의하다',
+                  'tener razón': '옳다, 맞다',
+                  'hacer falta': '필요하다',
+                  'echar de menos': '그리워하다',
+                  'llevarse bien': '잘 지내다',
+                  'ponerse en contacto': '연락하다',
+                  'tomar el pelo': '놀리다, 농담하다',
+                  'meter la pata': '실수하다',
+                  'quedarse sin palabras': '말문이 막히다',
+                  'estar hasta las narices': '지긋지긋하다',
+                  'dar igual': '상관없다',
+                  'costar trabajo': '힘들다',
+                  'hacer gracia': '재미있다',
+                  'dar la lata': '귀찮게 하다',
+                  'perder el tiempo': '시간을 낭비하다',
+                  'tener suerte': '운이 좋다',
+                  'estar harto': '지긋지긋하다',
+                  'dar miedo': '무섭다',
+                  'tener ganas': '하고 싶다',
+                  'hacer cola': '줄을 서다',
+                  'estar de moda': '유행하다',
+                  'salir adelante': '앞으로 나아가다',
+                  'llevarse un susto': '놀라다',
+                  'tener prisa': '급하다',
+                  'hacer daño': '해를 끼치다',
+                  'dar las gracias': '감사하다',
+                  'tener cuidado': '조심하다',
+                  'estar de broma': '농담하다',
+                  'dar pena': '안타깝다',
+                  'tener éxito': '성공하다',
+                  'hacer el ridículo': '웃음거리가 되다',
+                  'dar vergüenza': '부끄럽다',
+                  'tener hambre': '배고프다',
+                  'estar de viaje': '여행 중이다',
+                  'dar la razón': '동의하다',
+                  'tener sed': '목마르다',
+                  'estar de vuelta': '돌아오다',
+                  'tener frío': '춥다',
+                  'estar de pie': '서 있다',
+                  'hacer ruido': '소음을 내다',
+                  'dar calor': '따뜻하다',
+                  'tener sueño': '졸리다',
+                  'estar de mal humor': '기분이 나쁘다',
+                  'hacer ejercicio': '운동하다',
+                  'dar asco': '역겹다',
+                  
+                  # 연결어 표현
+                  'al fin y al cabo': '결국',
+                  'a fin de cuentas': '결국',
+                  'en resumidas cuentas': '요약하면',
+                  'por lo tanto': '따라서',
+                  'sin embargo': '그러나',
+                  'por consiguiente': '그 결과',
+                  'a pesar de': '~에도 불구하고',
+                  'con tal de que': '~하는 한',
+                  'siempre y cuando': '~하는 한',
+                  'a no ser que': '~하지 않는 한',
+                  'con el fin de': '~하기 위해',
+                  'en cuanto a': '~에 관해서',
+                  'en lo que respecta': '~에 관해서',
+                  'por lo que respecta': '~에 관해서',
+                  'en lo que se refiere': '~에 관해서',
+                  'por otro lado': '반면에',
+                  'de todos modos': '어쨌든',
+                  'en cualquier caso': '어떤 경우든',
+                  'de todas formas': '어쨌든',
+                  'en todo caso': '어떤 경우든',
+                  
+                  # 구어체 표현
+                  'ponerse las pilas': '정신차리다',
+                  'tirar la casa por la ventana': '돈을 물 쓰듯 하다',
+                  'estar en las nubes': '딴 생각에 빠져있다',
+                  'costar un ojo de la cara': '매우 비싸다',
+                  'ser pan comido': '식은 죽 먹기다',
+                  'llover a cántaros': '비가 억수로 내리다',
+                  'ser una ganga': '싸게 사다',
+                  'estar como una cabra': '미쳤다',
+                  'estar en babia': '딴 생각에 빠져있다',
+                  'ser un hueso duro de roer': '만만치 않다',
+                  
+                  # 정치/사회 표현
+                  'apoyar la propuesta': '제안을 지지하다',
+                  'buscar un entendimiento': '합의를 찾다',
+                  'reflexionar sobre': '~에 대해 숙고하다',
+                  'desdeñar la oferta': '제안을 무시하다',
+                  'abrir el diálogo': '대화를 시작하다',
+                  'tender puentes': '가교를 놓다',
+                  'romper el consenso': '합의를 깨뜨리다',
+                  'fortalecer la democracia': '민주주의를 강화하다',
+                  'garantizar la estabilidad': '안정을 보장하다',
+                  'promover el cambio': '변화를 촉진하다',
+                  
+                  # 경제/금융 표현
+                  'productos financieros': '금융 상품',
+                  'preferentes': '우선주',
+                  'crisis económica': '경제 위기',
+                  'mercado financiero': '금융 시장',
+                  'inversión segura': '안전한 투자',
+                  'riesgo elevado': '높은 위험',
+                  'rentabilidad': '수익성',
+                  'entidades bancarias': '은행 기관',
+                  'supervisión financiera': '금융 감독',
+                  'protección al consumidor': '소비자 보호'
+              }
+              
+              # 컨텐츠에서 표현 찾기
+              found_expressions = []
+              content_lower = content.lower()
+              
+              for expression, meaning in expression_dict.items():
+                  if expression.lower() in content_lower:
+                      found_expressions.append(f"{expression} ({meaning})")
+              
+              # 추가적으로 동사 + 명사 조합이나 중요한 구문 찾기
+              important_patterns = [
+                  r'\b(se abre a \w+)\b',  # "se abre a reflexionar" 같은 패턴
+                  r'\b(no buscar \w+)\b',   # "no buscar un entendimiento" 같은 패턴
+                  r'\b(desdeñar \w+)\b',    # "desdeñar la oferta" 같은 패턴
+                  r'\b(tender \w+)\b',      # "tender puentes" 같은 패턴
+                  r'\b(fortalecer \w+)\b',  # "fortalecer la democracia" 같은 패턴
               ]
               
-              expressions = []
-              for pattern in expression_patterns:
+              for pattern in important_patterns:
                   matches = re.findall(pattern, content, re.IGNORECASE)
-                  expressions.extend(matches)
+                  for match in matches:
+                      if match not in [expr.split(' (')[0] for expr in found_expressions]:
+                          # 간단한 번역 추가
+                          if 'se abre a' in match:
+                              found_expressions.append(f"{match} (~에 열려있다)")
+                          elif 'no buscar' in match:
+                              found_expressions.append(f"{match} (~을 찾지 않다)")
+                          elif 'desdeñar' in match:
+                              found_expressions.append(f"{match} (~을 무시하다)")
+                          elif 'tender' in match:
+                              found_expressions.append(f"{match} (~을 내밀다)")
+                          elif 'fortalecer' in match:
+                              found_expressions.append(f"{match} (~을 강화하다)")
               
-              if 'preferentes' in content.lower() or 'ahorros' in content.lower():
-                  expressions.extend(['caer en la trampa', 'perder los ahorros', 'productos financieros'])
-              
-              return expressions[:3]
+              # 중복 제거 및 최대 2개 반환
+              unique_expressions = list(dict.fromkeys(found_expressions))
+              return unique_expressions[:2]
 
           def create_detailed_memo(content_type, data, weekday_name):
               if content_type == "article":
                   category = data.get('category', '일반')
-                  preview = data.get('preview', '')[:100] + '...' if data.get('preview') else ''
-                  # 따옴표 이스케이프 처리
-                  preview = preview.replace('"', '\\"').replace("'", "\\'")
+                  expressions = data.get('expressions', [])
+                  
+                  expressions_text = ""
+                  if expressions:
+                      expr_list = ", ".join(expressions[:2])
+                      expressions_text = f"💡 핵심 표현: {expr_list} "
                   
                   return (f"📰 {category} 분야 기사 "
                          f"📅 발행: {data.get('published', '오늘')} "
                          f"🎯 학습목표: 15분 독해, 어휘 5개 정리 "
-                         f"💡 미리보기: {preview} "
+                         f"{expressions_text}"
                          f"📝 권장: 모르는 단어는 노트에 정리하며 읽기")
 
               elif content_type == "podcast":
@@ -239,16 +387,44 @@ jobs:
                   expressions = data.get('expressions', [])
                   episode_num = data.get('episode_number', '')
                   
+                  # 주제에 따른 학습목표 설정
+                  learning_goals = {
+                      '경제': '금융 어휘',
+                      '정치': '정치 용어',
+                      '문화': '문화 표현',
+                      '사회': '사회 이슈 어휘',
+                      '교육': '교육 관련 어휘',
+                      '건강': '의료 용어',
+                      '기술': '기술 용어',
+                      '문법': '문법 구조'
+                  }
+                  goal = learning_goals.get(topic, '핵심 어휘')
+                  
+                  # 재생시간에 따른 청취 계획 설정
+                  if ':' in duration:
+                      try:
+                          minutes, seconds = duration.split(':')
+                          total_minutes = int(minutes)
+                          if total_minutes > 30:
+                              listen_plan = f"(30분 청취 목표)"
+                          elif total_minutes > 20:
+                              listen_plan = f"(전체 {duration} 청취)"
+                          else:
+                              listen_plan = f"(전체 {duration} 청취)"
+                      except:
+                          listen_plan = "(25분 청취 목표)"
+                  else:
+                      listen_plan = "(25분 청취 목표)"
+                  
                   expressions_text = ""
                   if expressions:
-                      # 따옴표 이스케이프 처리
-                      clean_expressions = [expr.replace('"', '\\"').replace("'", "\\'") for expr in expressions[:2]]
-                      expr_list = "', '".join(clean_expressions)
-                      expressions_text = f"💡 핵심 표현: '{expr_list}' "
+                      # 표현들을 쉼표로 구분하여 표시 (한글 뜻 포함)
+                      expr_list = ", ".join(expressions[:2])
+                      expressions_text = f"💡 핵심 표현: {expr_list} "
                   
                   return (f"🎧 {podcast_name} Ep.{episode_num} - {weekday_name} 스페인 팟캐스트 "
-                         f"⏱️ 재생시간: {duration} (전체 25분 청취 계획) "
-                         f"🎯 학습목표: 금융 어휘 5개 정리 "
+                         f"⏱️ 재생시간: {duration} {listen_plan} "
+                         f"🎯 학습목표: {goal} 5개 정리 "
                          f"🌍 주제: {topic} "
                          f"{expressions_text}"
                          f"📝 권장: 핵심 어휘에 집중하여 청취")
@@ -272,12 +448,15 @@ jobs:
                   summary = latest.get('summary', '')
                   # 제목 정리 (escape sequence 제거)
                   clean_title = latest.title.replace('&quot;', '"').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+                  # 기사에서도 핵심 표현 추출
+                  expressions = get_key_expressions(clean_title, summary)
                   article_data = {
                       'title': clean_title,
                       'url': latest.link,
                       'published': latest.get('published', ''),
                       'category': extract_category_from_summary(summary),
-                      'preview': summary
+                      'preview': summary,
+                      'expressions': expressions
                   }
           except Exception as e:
               print(f"기사 수집 오류: {e}")
