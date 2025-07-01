@@ -1,0 +1,207 @@
+# .github/workflows/spanish-learning-automation.yml
+name: 스페인어 학습 자료 자동 수집
+
+on:
+  schedule:
+    # 매일 UTC 23:00 (한국시간 오전 8시)에 실행
+    - cron: "0 23 * * 1-5" # 평일만 실행
+  workflow_dispatch: # 수동 실행 가능
+
+env:
+  NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+  NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+
+jobs:
+  collect-learning-materials:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 feedparser python-dateutil
+
+      - name: Calculate learning phase
+        id: phase
+        run: |
+          # 현재 날짜 기준으로 학습 단계 계산
+          python3 << 'EOF'
+          import os
+          from datetime import datetime, timedelta
+
+          # 학습 시작일 (2025-07-01)
+          start_date = datetime(2025, 7, 1)
+          current_date = datetime.now()
+
+          # 주차 계산
+          week_num = (current_date - start_date).days // 7 + 1
+          weekday = current_date.weekday()  # 0=월요일
+
+          # 독해 소스 결정
+          if week_num <= 2:
+              reading_source = "20minutos"
+              reading_url = "https://www.20minutos.es/"
+              reading_difficulty = "B2"
+          elif week_num <= 4:
+              reading_source = "El País 단신"
+              reading_url = "https://elpais.com/"
+              reading_difficulty = "B2"
+          else:
+              reading_source = "El País 사설"
+              reading_url = "https://elpais.com/opinion/"
+              reading_difficulty = "C1"
+              
+          # 팟캐스트 일정
+          podcast_schedule = {
+              0: ("Hoy Hablamos", "https://podcasts.apple.com/kr/podcast/hoy-hablamos-podcast-diario-para-aprender-español-learn/id1201483158", "스페인"),
+              1: ("Radio Ambulante", "https://podcasts.apple.com/kr/podcast/radio-ambulante/id527614348", "중남미"),
+              2: ("Advanced Spanish", "https://podcasts.apple.com/kr/podcast/advanced-spanish-podcast-español-avanzado/id1632291264", "스페인"),
+              3: ("Radio Ambulante", "https://podcasts.apple.com/kr/podcast/radio-ambulante/id527614348", "중남미"),
+              4: ("DELE Podcast", "https://podcasts.apple.com/us/podcast/examen-dele/id1705001626", "스페인")
+          }
+
+          podcast_name, podcast_url, podcast_region = podcast_schedule.get(weekday, ("Hoy Hablamos", "https://podcasts.apple.com/kr/podcast/hoy-hablamos-podcast-diario-para-aprender-español-learn/id1201483158", "스페인"))
+
+          # GitHub Actions 환경변수로 출력
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"week_num={week_num}\n")
+              f.write(f"reading_source={reading_source}\n")
+              f.write(f"reading_url={reading_url}\n")
+              f.write(f"reading_difficulty={reading_difficulty}\n")
+              f.write(f"podcast_name={podcast_name}\n")
+              f.write(f"podcast_url={podcast_url}\n")
+              f.write(f"podcast_region={podcast_region}\n")
+              f.write(f"date={current_date.strftime('%Y-%m-%d')}\n")
+          EOF
+
+      - name: Collect latest articles
+        id: articles
+        run: |
+          python3 << 'EOF'
+          import os
+          import requests
+          import feedparser
+          from datetime import datetime
+
+          # RSS 피드에서 최신 기사 수집
+          def get_latest_article(source):
+              try:
+                  if source == "20minutos":
+                      feed_url = "https://www.20minutos.es/rss/"
+                  elif "El País" in source:
+                      feed_url = "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada"
+                  else:
+                      return None, None
+                      
+                  feed = feedparser.parse(feed_url)
+                  if feed.entries:
+                      latest = feed.entries[0]
+                      return latest.title, latest.link
+                  return None, None
+              except Exception as e:
+                  print(f"Error fetching {source}: {e}")
+                  return None, None
+
+          reading_source = "${{ steps.phase.outputs.reading_source }}"
+          title, url = get_latest_article(reading_source)
+
+          if title and url:
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write(f"article_title={title}\n")
+                  f.write(f"article_url={url}\n")
+          EOF
+
+      - name: Add materials to Notion
+        run: |
+          python3 << 'EOF'
+          import os
+          import requests
+          import json
+          from datetime import datetime
+
+          notion_token = os.environ['NOTION_TOKEN']
+          database_id = os.environ['NOTION_DATABASE_ID']
+
+          headers = {
+              "Authorization": f"Bearer {notion_token}",
+              "Notion-Version": "2022-06-28", 
+              "Content-Type": "application/json"
+          }
+
+          today = "${{ steps.phase.outputs.date }}"
+
+          # 독해 자료 추가
+          reading_title = "${{ steps.articles.outputs.article_title }}" or f"[${{ steps.phase.outputs.reading_source }}] 최신 기사"
+          reading_url = "${{ steps.articles.outputs.article_url }}" or "${{ steps.phase.outputs.reading_url }}"
+
+          reading_payload = {
+              "parent": {"database_id": database_id},
+              "properties": {
+                  "내용": {"title": [{"text": {"content": f"[{today}] {reading_title}"}}]},
+                  "URL": {"url": reading_url},
+                  "날짜": {"date": {"start": today}},
+                  "지역": {"select": {"name": "스페인"}},
+                  "난이도": {"select": {"name": "${{ steps.phase.outputs.reading_difficulty }}"}},
+                  "자료 유형": {"select": {"name": "기사/뉴스"}},
+                  "학습 영역": {"select": {"name": "독해"}},
+                  "메모": {"rich_text": [{"text": {"content": "15분 독해 연습. 어휘 5개 정리 목표."}}]}
+              }
+          }
+
+          # 청해 자료 추가
+          podcast_payload = {
+              "parent": {"database_id": database_id},
+              "properties": {
+                  "내용": {"title": [{"text": {"content": f"[{today}] ${{ steps.phase.outputs.podcast_name }}"}}]},
+                  "URL": {"url": "${{ steps.phase.outputs.podcast_url }}"},
+                  "날짜": {"date": {"start": today}},
+                  "지역": {"select": {"name": "${{ steps.phase.outputs.podcast_region }}"}},
+                  "난이도": {"select": {"name": "C1"}},
+                  "자료 유형": {"select": {"name": "팟캐스트"}},
+                  "학습 영역": {"select": {"name": "청해"}},
+                  "메모": {"rich_text": [{"text": {"content": "25분 청취 목표. 표현 5개 정리."}}]}
+              }
+          }
+
+          # Notion API 호출
+          try:
+              # 독해 자료 추가
+              response = requests.post(
+                  "https://api.notion.com/v1/pages",
+                  headers=headers,
+                  json=reading_payload
+              )
+              if response.status_code == 200:
+                  print(f"✅ 독해 자료 추가 성공: {reading_title}")
+              else:
+                  print(f"❌ 독해 자료 추가 실패: {response.text}")
+                  
+              # 청해 자료 추가  
+              response = requests.post(
+                  "https://api.notion.com/v1/pages",
+                  headers=headers,
+                  json=podcast_payload
+              )
+              if response.status_code == 200:
+                  print(f"✅ 청해 자료 추가 성공: ${{ steps.phase.outputs.podcast_name }}")
+              else:
+                  print(f"❌ 청해 자료 추가 실패: {response.text}")
+                  
+          except Exception as e:
+              print(f"오류 발생: {e}")
+          EOF
+
+      - name: Send notification
+        if: success()
+        run: |
+          echo "🎉 ${{ steps.phase.outputs.date }} 스페인어 학습 자료 자동 수집 완료!"
+          echo "📖 독해: ${{ steps.phase.outputs.reading_source }}"
+          echo "🎧 청해: ${{ steps.phase.outputs.podcast_name }}"
+          echo "📅 학습 주차: ${{ steps.phase.outputs.week_num }}주차"
