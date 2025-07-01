@@ -1,280 +1,450 @@
-#!/usr/bin/env python3
-"""
-개선된 스페인어 학습 자료 자동화 시스템
-- 정확한 기사 링크 추출
-- 특정 팟캐스트 에피소드 제목 및 링크 제공
-"""
+# .github/workflows/spanish-learning-automation.yml
+name: 스페인어 학습 자료 자동 수집
 
-import requests
-import feedparser
-import json
-import re
-from datetime import datetime
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin
+on:
+  schedule:
+    # 매일 UTC 23:00 (한국시간 오전 8시)에 실행
+    - cron: "0 23 * * 1-5" # 평일만 실행
+  workflow_dispatch: # 수동 실행 가능
 
-class ImprovedSpanishAutomation:
-    def __init__(self):
-        self.notion_token = os.getenv('NOTION_TOKEN')
-        self.database_id = os.getenv('NOTION_DATABASE_ID')
-        self.headers = {
-            "Authorization": f"Bearer {self.notion_token}",
-            "Notion-Version": "2022-06-28",
-            "Content-Type": "application/json"
-        }
+env:
+  NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+  NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
 
-    def get_specific_20minutos_article(self) -> tuple:
-        """20minutos에서 구체적인 기사 링크와 제목 추출"""
-        try:
-            # RSS 피드에서 최신 기사들 가져오기
-            rss_url = "https://www.20minutos.es/rss/"
-            feed = feedparser.parse(rss_url)
-            
-            if feed.entries:
-                # 가장 최신 기사 선택
-                latest_article = feed.entries[0]
-                
-                # 기사 내용 미리보기로 어휘 예측
-                summary = latest_article.get('summary', '')
-                category = self.extract_category_from_summary(summary)
-                
-                return {
-                    'title': latest_article.title,
-                    'url': latest_article.link,
-                    'published': latest_article.get('published', ''),
-                    'category': category,
-                    'preview': summary[:200] + '...' if len(summary) > 200 else summary
-                }
-        except Exception as e:
-            print(f"20minutos 기사 추출 오류: {e}")
-            return None
+jobs:
+  collect-learning-materials:
+    runs-on: ubuntu-latest
 
-    def extract_category_from_summary(self, summary: str) -> str:
-        """기사 요약에서 카테고리 추출"""
-        keywords = {
-            '정치': ['gobierno', 'política', 'elecciones', 'parlamento', 'ministro'],
-            '경제': ['economía', 'banco', 'euro', 'empleo', 'crisis', 'mercado'],
-            '사회': ['sociedad', 'educación', 'sanidad', 'vivienda', 'familia'],
-            '스포츠': ['fútbol', 'Real Madrid', 'Barcelona', 'Liga', 'deporte'],
-            '기술': ['tecnología', 'internet', 'móvil', 'digital', 'app']
-        }
-        
-        summary_lower = summary.lower()
-        for category, words in keywords.items():
-            if any(word in summary_lower for word in words):
-                return category
-        return '일반'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    def get_specific_podcast_episode(self, podcast_type: str) -> dict:
-        """특정 팟캐스트의 최신 에피소드 정보 추출"""
-        
-        if podcast_type == "hoy_hablamos":
-            return self.get_hoy_hablamos_episode()
-        elif podcast_type == "radio_ambulante":
-            return self.get_radio_ambulante_episode()
-        elif podcast_type == "advanced_spanish":
-            return self.get_advanced_spanish_episode()
-        elif podcast_type == "dele_podcast":
-            return self.get_dele_podcast_episode()
-        
-        return None
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
 
-    def get_hoy_hablamos_episode(self) -> dict:
-        """Hoy Hablamos 최신 에피소드"""
-        try:
-            # RSS 피드 또는 웹사이트 스크래핑
-            rss_url = "https://feeds.feedburner.com/hoyhablamos"
-            feed = feedparser.parse(rss_url)
-            
-            if feed.entries:
-                latest = feed.entries[0]
-                episode_number = self.extract_episode_number(latest.title)
-                
-                return {
-                    'title': f"Hoy Hablamos Ep.{episode_number}: {latest.title}",
-                    'url': latest.link,
-                    'duration': self.extract_duration(latest.get('summary', '')),
-                    'topic': self.extract_topic_keywords(latest.title),
-                    'published': latest.get('published', ''),
-                    'direct_play_url': self.get_direct_audio_url(latest.link)
-                }
-        except Exception as e:
-            print(f"Hoy Hablamos 에피소드 추출 오류: {e}")
-            # 폴백: 일반적인 정보 제공
-            return {
-                'title': "Hoy Hablamos - 최신 일일 에피소드",
-                'url': "https://www.hoyhablamos.com/",
-                'topic': "스페인 일상 주제",
-                'instruction': "웹사이트에서 가장 최신 에피소드를 선택하세요"
-            }
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 feedparser python-dateutil lxml
 
-    def get_radio_ambulante_episode(self) -> dict:
-        """Radio Ambulante 최신 에피소드"""
-        try:
-            # NPR RSS 피드 사용
-            rss_url = "https://feeds.npr.org/510311/podcast.xml"
-            feed = feedparser.parse(rss_url)
-            
-            if feed.entries:
-                latest = feed.entries[0]
-                
-                return {
-                    'title': f"Radio Ambulante: {latest.title}",
-                    'url': latest.link,
-                    'duration': self.extract_duration_from_itunes(latest),
-                    'country': self.extract_country_from_title(latest.title),
-                    'published': latest.get('published', ''),
-                    'apple_url': f"https://podcasts.apple.com/podcast/radio-ambulante/id527614348?i={self.extract_episode_id(latest.link)}"
-                }
-        except Exception as e:
-            print(f"Radio Ambulante 에피소드 추출 오류: {e}")
-            return {
-                'title': "Radio Ambulante - 최신 라틴아메리카 스토리",
-                'url': "https://radioambulante.org/",
-                'instruction': "Apple Podcasts에서 가장 최신 에피소드를 선택하세요"
-            }
+      - name: Calculate learning phase and schedule
+        id: phase
+        run: |
+          python3 << 'EOF'
+          import os
+          from datetime import datetime, timedelta
 
-    def get_advanced_spanish_episode(self) -> dict:
-        """Advanced Spanish Podcast 최신 에피소드"""
-        try:
-            # Spanish Language Coach 웹사이트 스크래핑
-            url = "https://www.spanishlanguagecoach.com/podcast/"
-            response = requests.get(url)
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # 최신 에피소드 찾기
-            latest_episode = soup.find('article', class_='post')
-            if latest_episode:
-                title = latest_episode.find('h2').text.strip()
-                episode_url = latest_episode.find('a')['href']
-                
-                return {
-                    'title': f"Advanced Spanish: {title}",
-                    'url': episode_url,
-                    'level': 'C1',
-                    'has_transcript': True,
-                    'has_flashcards': True,
-                    'apple_url': "https://podcasts.apple.com/kr/podcast/advanced-spanish-podcast-español-avanzado/id1632291264"
-                }
-        except Exception as e:
-            print(f"Advanced Spanish 에피소드 추출 오류: {e}")
-            return {
-                'title': "Advanced Spanish - 최신 고급 대화",
-                'url': "https://www.spanishlanguagecoach.com/podcast/",
-                'instruction': "웹사이트에서 최신 에피소드를 확인하세요"
-            }
+          # 학습 시작일 (2025-07-01)
+          start_date = datetime(2025, 7, 1)
+          current_date = datetime.now()
 
-    def extract_episode_number(self, title: str) -> str:
-        """제목에서 에피소드 번호 추출"""
-        match = re.search(r'(\d+)', title)
-        return match.group(1) if match else 'Latest'
+          # 주차 계산
+          week_num = (current_date - start_date).days // 7 + 1
+          weekday = current_date.weekday()  # 0=월요일
 
-    def extract_duration(self, summary: str) -> str:
-        """요약에서 재생시간 추출"""
-        duration_match = re.search(r'(\d+)\s*min', summary)
-        return f"{duration_match.group(1)}분" if duration_match else "약 15-25분"
+          # 독해 소스 결정
+          if week_num <= 2:
+              reading_source = "20minutos"
+              reading_url = "https://www.20minutos.es/"
+              reading_difficulty = "B2"
+          elif week_num <= 4:
+              reading_source = "El País 단신"
+              reading_url = "https://elpais.com/"
+              reading_difficulty = "B2"
+          else:
+              reading_source = "El País 사설"
+              reading_url = "https://elpais.com/opinion/"
+              reading_difficulty = "C1"
+              
+          # 팟캐스트 일정 (RSS 피드와 Apple Podcasts 링크)
+          podcast_schedule = {
+              0: {
+                  "name": "Hoy Hablamos",
+                  "rss": "https://feeds.feedburner.com/hoyhablamos",
+                  "apple_base": "https://podcasts.apple.com/kr/podcast/hoy-hablamos-podcast-diario-para-aprender-español-learn/id1201483158",
+                  "region": "스페인",
+                  "backup_url": "https://www.hoyhablamos.com/"
+              },
+              1: {
+                  "name": "Radio Ambulante", 
+                  "rss": "https://feeds.npr.org/510311/podcast.xml",
+                  "apple_base": "https://podcasts.apple.com/kr/podcast/radio-ambulante/id527614348",
+                  "region": "중남미",
+                  "backup_url": "https://radioambulante.org/"
+              },
+              2: {
+                  "name": "Advanced Spanish",
+                  "rss": "https://feeds.buzzsprout.com/1829091.rss", 
+                  "apple_base": "https://podcasts.apple.com/kr/podcast/advanced-spanish-podcast-español-avanzado/id1632291264",
+                  "region": "스페인",
+                  "backup_url": "https://www.spanishlanguagecoach.com/podcast/"
+              },
+              3: {
+                  "name": "Radio Ambulante",
+                  "rss": "https://feeds.npr.org/510311/podcast.xml",
+                  "apple_base": "https://podcasts.apple.com/kr/podcast/radio-ambulante/id527614348", 
+                  "region": "중남미",
+                  "backup_url": "https://radioambulante.org/"
+              },
+              4: {
+                  "name": "DELE Podcast",
+                  "rss": "https://anchor.fm/s/f4f4a4f0/podcast/rss",
+                  "apple_base": "https://podcasts.apple.com/us/podcast/examen-dele/id1705001626",
+                  "region": "스페인", 
+                  "backup_url": "https://anchor.fm/examen-dele"
+              }
+          }
 
-    def extract_topic_keywords(self, title: str) -> str:
-        """제목에서 주제 키워드 추출"""
-        # 일반적인 주제 키워드 매핑
-        topic_map = {
-            'gramática': '문법',
-            'cultura': '문화', 
-            'historia': '역사',
-            'cocina': '요리',
-            'viajes': '여행',
-            'trabajo': '직업',
-            'familia': '가족',
-            'tecnología': '기술'
-        }
-        
-        title_lower = title.lower()
-        for spanish, korean in topic_map.items():
-            if spanish in title_lower:
-                return korean
-        return '일반 주제'
+          podcast_info = podcast_schedule.get(weekday, podcast_schedule[0])
 
-    def create_detailed_memo(self, content_type: str, data: dict) -> str:
-        """상세한 메모 생성"""
-        if content_type == "article":
-            return f"""📰 {data.get('category', '일반')} 분야 기사
-📅 발행: {data.get('published', '오늘')}
-🎯 학습목표: 15분 독해, 어휘 5개 정리
-💡 미리보기: {data.get('preview', '')}
-📝 권장: 모르는 단어는 노트에 정리하며 읽기"""
+          # GitHub Actions 환경변수로 출력
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"week_num={week_num}\n")
+              f.write(f"reading_source={reading_source}\n")
+              f.write(f"reading_url={reading_url}\n")
+              f.write(f"reading_difficulty={reading_difficulty}\n")
+              f.write(f"podcast_name={podcast_info['name']}\n")
+              f.write(f"podcast_rss={podcast_info['rss']}\n")
+              f.write(f"podcast_apple_base={podcast_info['apple_base']}\n")
+              f.write(f"podcast_region={podcast_info['region']}\n")
+              f.write(f"podcast_backup={podcast_info['backup_url']}\n")
+              f.write(f"date={current_date.strftime('%Y-%m-%d')}\n")
+              f.write(f"weekday_name={['월요일', '화요일', '수요일', '목요일', '금요일', '토요일', '일요일'][weekday]}\n")
+          EOF
 
-        elif content_type == "podcast":
-            return f"""🎧 {data.get('title', '')}
-⏱️ 재생시간: {data.get('duration', '15-25분')}
-🎯 학습목표: 25분 청취, 표현 5개 정리
-🌍 지역: {data.get('country', '스페인/중남미')}
-📝 권장: {data.get('instruction', '전사본 활용하여 반복 청취')}"""
+      - name: Collect articles and podcast episodes with detailed info
+        id: materials
+        run: |
+          python3 << 'EOF'
+          import os
+          import requests
+          import feedparser
+          from datetime import datetime
+          import re
+          from bs4 import BeautifulSoup
+          from urllib.parse import urljoin
 
-    def add_to_notion_with_specific_links(self, article_data: dict, podcast_data: dict):
-        """구체적인 링크와 함께 Notion DB 업데이트"""
-        today = datetime.now().strftime("%Y-%m-%d")
-        
-        # 독해 자료 추가 (실제 기사 링크)
-        if article_data:
-            reading_payload = {
-                "parent": {"database_id": self.database_id},
-                "properties": {
-                    "내용": {"title": [{"text": {"content": f"[{today}] {article_data['title']}"}}]},
-                    "URL": {"url": article_data['url']},  # 실제 기사 링크
-                    "날짜": {"date": {"start": today}},
-                    "지역": {"select": {"name": "스페인"}},
-                    "난이도": {"select": {"name": "B2"}},
-                    "자료 유형": {"select": {"name": "기사/뉴스"}},
-                    "학습 영역": {"select": {"name": "독해"}},
-                    "메모": {"rich_text": [{"text": {"content": self.create_detailed_memo("article", article_data)}}]}
-                }
-            }
-            
-            self.send_to_notion(reading_payload, "독해 자료")
+          def extract_category_from_summary(summary):
+              keywords = {
+                  '정치': ['gobierno', 'política', 'elecciones', 'parlamento', 'ministro', 'rey'],
+                  '경제': ['economía', 'banco', 'euro', 'empleo', 'crisis', 'mercado', 'dinero', 'trabajo'],
+                  '사회': ['sociedad', 'educación', 'sanidad', 'vivienda', 'familia', 'salud'],
+                  '스포츠': ['fútbol', 'Real Madrid', 'Barcelona', 'Liga', 'deporte', 'partido'],
+                  '기술': ['tecnología', 'internet', 'móvil', 'digital', 'app', 'inteligencia'],
+                  '문화': ['cultura', 'arte', 'música', 'teatro', 'festival', 'libro']
+              }
+              
+              summary_lower = summary.lower()
+              for category, words in keywords.items():
+                  if any(word in summary_lower for word in words):
+                      return category
+              return '일반'
 
-        # 청해 자료 추가 (구체적인 에피소드 링크)
-        if podcast_data:
-            podcast_payload = {
-                "parent": {"database_id": self.database_id},
-                "properties": {
-                    "내용": {"title": [{"text": {"content": f"[{today}] {podcast_data['title']}"}}]},
-                    "URL": {"url": podcast_data.get('apple_url', podcast_data['url'])},  # Apple Podcasts 직접 링크 우선
-                    "날짜": {"date": {"start": today}},
-                    "지역": {"select": {"name": podcast_data.get('region', '스페인')}},
-                    "난이도": {"select": {"name": "C1"}},
-                    "자료 유형": {"select": {"name": "팟캐스트"}},
-                    "학습 영역": {"select": {"name": "청해"}},
-                    "메모": {"rich_text": [{"text": {"content": self.create_detailed_memo("podcast", podcast_data)}}]}
-                }
-            }
-            
-            self.send_to_notion(podcast_payload, "청해 자료")
+          def extract_episode_number(title):
+              patterns = [
+                  r'Ep\.?\s*(\d+)',
+                  r'Episode\s*(\d+)',
+                  r'#(\d+)',
+                  r'(\d{3,4})'
+              ]
+              
+              for pattern in patterns:
+                  match = re.search(pattern, title, re.IGNORECASE)
+                  if match:
+                      return match.group(1)
+              return None
 
-    def send_to_notion(self, payload: dict, content_type: str):
-        """Notion API 전송"""
-        try:
-            response = requests.post(
-                "https://api.notion.com/v1/pages",
-                headers=self.headers,
-                json=payload
-            )
-            if response.status_code == 200:
-                print(f"✅ {content_type} 추가 성공!")
-            else:
-                print(f"❌ {content_type} 추가 실패: {response.text}")
-        except Exception as e:
-            print(f"{content_type} 전송 오류: {e}")
+          def extract_duration_from_feed(entry):
+              if hasattr(entry, 'itunes_duration'):
+                  return entry.itunes_duration
+              
+              summary = entry.get('summary', '') + entry.get('description', '')
+              duration_patterns = [
+                  r'(\d+)\s*min',
+                  r'(\d+)\s*분',
+                  r'(\d+):(\d+)',
+                  r'Duration:\s*(\d+)'
+              ]
+              
+              for pattern in duration_patterns:
+                  match = re.search(pattern, summary)
+                  if match:
+                      if ':' in pattern:
+                          return f"{match.group(1)}:{match.group(2)}"
+                      else:
+                          return f"{match.group(1)}분"
+              
+              return "15-25분"
 
-# 실행 예시
-def main():
-    automation = ImprovedSpanishAutomation()
-    
-    # 실제 기사와 에피소드 수집
-    article_data = automation.get_specific_20minutos_article()
-    podcast_data = automation.get_specific_podcast_episode("hoy_hablamos")  # 월요일
-    
-    # Notion DB에 구체적인 링크와 함께 추가
-    automation.add_to_notion_with_specific_links(article_data, podcast_data)
+          def extract_topic_keywords(title, summary=""):
+              content = (title + " " + summary).lower()
+              
+              topic_keywords = {
+                  '문법': ['gramática', 'verbos', 'subjuntivo', 'pretérito', 'sintaxis'],
+                  '문화': ['cultura', 'tradición', 'costumbres', 'historia', 'arte'],
+                  '요리': ['cocina', 'comida', 'receta', 'gastronomía', 'plato'],
+                  '여행': ['viajes', 'turismo', 'ciudades', 'lugares', 'destinos'],
+                  '직업': ['trabajo', 'empleo', 'profesión', 'carrera', 'oficina'],
+                  '가족': ['familia', 'padres', 'hijos', 'matrimonio', 'casa'],
+                  '기술': ['tecnología', 'internet', 'móviles', 'digital', 'aplicaciones'],
+                  '정치': ['política', 'gobierno', 'elecciones', 'democracia'],
+                  '경제': ['economía', 'dinero', 'banco', 'trabajo', 'crisis', 'preferentes', 'ahorros'],
+                  '사회': ['sociedad', 'gente', 'problemas', 'cambios', 'vida'],
+                  '건강': ['salud', 'medicina', 'hospital', 'enfermedad', 'médico'],
+                  '교육': ['educación', 'estudiantes', 'universidad', 'aprender']
+              }
+              
+              for topic, keywords in topic_keywords.items():
+                  if any(keyword in content for keyword in keywords):
+                      return topic
+              return '일반 주제'
 
-if __name__ == "__main__":
-    main()
+          def get_key_expressions(title, summary=""):
+              content = title + " " + summary
+              
+              expression_patterns = [
+                  r"'([^']+)'",
+                  r'"([^"]+)"',
+                  r'\b(caer en la trampa|perder los ahorros|hacer caso|darse cuenta|tener en cuenta|por si acaso|de vez en cuando)\b'
+              ]
+              
+              expressions = []
+              for pattern in expression_patterns:
+                  matches = re.findall(pattern, content, re.IGNORECASE)
+                  expressions.extend(matches)
+              
+              if 'preferentes' in content.lower() or 'ahorros' in content.lower():
+                  expressions.extend(['caer en la trampa', 'perder los ahorros', 'productos financieros'])
+              
+              return expressions[:3]
+
+          def create_detailed_memo(content_type, data, weekday_name):
+              if content_type == "article":
+                  category = data.get('category', '일반')
+                  preview = data.get('preview', '')[:150] + '...' if data.get('preview') else ''
+                  
+                  return (f"📰 {category} 분야 기사\n"
+                         f"📅 발행: {data.get('published', '오늘')}\n"
+                         f"🎯 학습목표: 15분 독해, 어휘 5개 정리\n"
+                         f"💡 미리보기: {preview}\n"
+                         f"📝 권장: 모르는 단어는 노트에 정리하며 읽기")
+
+              elif content_type == "podcast":
+                  podcast_name = data.get('podcast_name', '')
+                  duration = data.get('duration', '15-25분')
+                  topic = data.get('topic', '일반 주제')
+                  expressions = data.get('expressions', [])
+                  episode_num = data.get('episode_number', '')
+                  
+                  expressions_text = ""
+                  if expressions:
+                      expr_list = "', '".join(expressions[:2])
+                      expressions_text = f"💡 핵심 표현: '{expr_list}'\n"
+                  
+                  return (f"🎧 {podcast_name} Ep.{episode_num} - {weekday_name} 스페인 팟캐스트\n"
+                         f"⏱️ 재생시간: {duration}\n"
+                         f"🎯 학습목표: 표현 5개 정리, 25분 청취 목표\n"
+                         f"🌍 주제: {topic}\n"
+                         f"{expressions_text}"
+                         f"📝 권장: 전사본 활용하여 반복 청취 (Apple Podcasts 앱 사용 권장)")
+
+          # 기사 수집
+          reading_source = "${{ steps.phase.outputs.reading_source }}"
+          article_data = None
+
+          try:
+              if reading_source == "20minutos":
+                  feed_url = "https://www.20minutos.es/rss/"
+              elif "El País" in reading_source:
+                  if "사설" in reading_source:
+                      feed_url = "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/opinion"
+                  else:
+                      feed_url = "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada"
+              
+              feed = feedparser.parse(feed_url)
+              if feed.entries:
+                  latest = feed.entries[0]
+                  summary = latest.get('summary', '')
+                  article_data = {
+                      'title': latest.title,
+                      'url': latest.link,
+                      'published': latest.get('published', ''),
+                      'category': extract_category_from_summary(summary),
+                      'preview': summary
+                  }
+          except Exception as e:
+              print(f"기사 수집 오류: {e}")
+
+          # 팟캐스트 에피소드 수집
+          podcast_rss = "${{ steps.phase.outputs.podcast_rss }}"
+          podcast_name = "${{ steps.phase.outputs.podcast_name }}"
+          weekday_name = "${{ steps.phase.outputs.weekday_name }}"
+          podcast_data = None
+
+          try:
+              feed = feedparser.parse(podcast_rss)
+              if feed.entries:
+                  latest = feed.entries[0]
+                  episode_number = extract_episode_number(latest.title)
+                  duration = extract_duration_from_feed(latest)
+                  topic = extract_topic_keywords(latest.title, latest.get('summary', ''))
+                  expressions = get_key_expressions(latest.title, latest.get('summary', ''))
+                  
+                  apple_base = "${{ steps.phase.outputs.podcast_apple_base }}"
+                  episode_link = latest.link
+                  
+                  episode_id_match = re.search(r'/(\d+)', episode_link)
+                  if episode_id_match:
+                      apple_episode_link = f"{apple_base}?i={episode_id_match.group(1)}"
+                  else:
+                      apple_episode_link = apple_base
+                  
+                  podcast_data = {
+                      'podcast_name': podcast_name,
+                      'title': latest.title,
+                      'url': apple_episode_link,
+                      'original_url': episode_link,
+                      'duration': duration,
+                      'topic': topic,
+                      'expressions': expressions,
+                      'episode_number': episode_number or 'Latest',
+                      'published': latest.get('published', ''),
+                      'region': "${{ steps.phase.outputs.podcast_region }}"
+                  }
+          except Exception as e:
+              print(f"팟캐스트 수집 오류: {e}")
+              podcast_data = {
+                  'podcast_name': podcast_name,
+                  'title': f"{podcast_name} - 최신 에피소드",
+                  'url': "${{ steps.phase.outputs.podcast_apple_base }}",
+                  'duration': "15-25분",
+                  'topic': "일반 주제",
+                  'expressions': [],
+                  'episode_number': 'Latest',
+                  'region': "${{ steps.phase.outputs.podcast_region }}"
+              }
+
+          # 결과 출력 (개행문자 제거)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              if article_data:
+                  article_title_clean = article_data['title'].replace('\n', ' ').replace('\r', ' ')
+                  article_memo_clean = create_detailed_memo('article', article_data, weekday_name).replace('\n', ' ')
+                  f.write(f"article_title={article_title_clean}\n")
+                  f.write(f"article_url={article_data['url']}\n")
+                  f.write(f"article_memo={article_memo_clean}\n")
+              
+              if podcast_data:
+                  podcast_title_clean = podcast_data['title'].replace('\n', ' ').replace('\r', ' ')
+                  podcast_memo_clean = create_detailed_memo('podcast', podcast_data, weekday_name).replace('\n', ' ')
+                  f.write(f"podcast_title={podcast_title_clean}\n")
+                  f.write(f"podcast_url={podcast_data['url']}\n")
+                  f.write(f"podcast_memo={podcast_memo_clean}\n")
+                  f.write(f"episode_number={podcast_data['episode_number']}\n")
+          EOF
+
+      - name: Add materials to Notion with detailed information
+        run: |
+          python3 << 'EOF'
+          import os
+          import requests
+          import json
+          from datetime import datetime
+
+          notion_token = os.environ['NOTION_TOKEN']
+          database_id = os.environ['NOTION_DATABASE_ID']
+
+          headers = {
+              "Authorization": f"Bearer {notion_token}",
+              "Notion-Version": "2022-06-28", 
+              "Content-Type": "application/json"
+          }
+
+          today = "${{ steps.phase.outputs.date }}"
+
+          # 독해 자료 추가
+          article_title = "${{ steps.materials.outputs.article_title }}"
+          article_url = "${{ steps.materials.outputs.article_url }}"
+          article_memo = "${{ steps.materials.outputs.article_memo }}"
+
+          if article_title and article_url:
+              reading_payload = {
+                  "parent": {"database_id": database_id},
+                  "properties": {
+                      "내용": {"title": [{"text": {"content": f"[{today}] {article_title}"}}]},
+                      "URL": {"url": article_url},
+                      "날짜": {"date": {"start": today}},
+                      "지역": {"select": {"name": "스페인"}},
+                      "난이도": {"select": {"name": "${{ steps.phase.outputs.reading_difficulty }}"}},
+                      "자료 유형": {"select": {"name": "기사/뉴스"}},
+                      "학습 영역": {"select": {"name": "독해"}},
+                      "메모": {"rich_text": [{"text": {"content": article_memo}}]}
+                  }
+              }
+              
+              try:
+                  response = requests.post(
+                      "https://api.notion.com/v1/pages",
+                      headers=headers,
+                      json=reading_payload
+                  )
+                  if response.status_code == 200:
+                      print(f"✅ 독해 자료 추가 성공: {article_title}")
+                  else:
+                      print(f"❌ 독해 자료 추가 실패: {response.text}")
+              except Exception as e:
+                  print(f"독해 자료 전송 오류: {e}")
+
+          # 청해 자료 추가
+          podcast_title = "${{ steps.materials.outputs.podcast_title }}"
+          podcast_url = "${{ steps.materials.outputs.podcast_url }}"
+          podcast_memo = "${{ steps.materials.outputs.podcast_memo }}"
+          episode_number = "${{ steps.materials.outputs.episode_number }}"
+
+          display_title = f"${{ steps.phase.outputs.podcast_name }} Ep.{episode_number}"
+
+          podcast_payload = {
+              "parent": {"database_id": database_id},
+              "properties": {
+                  "내용": {"title": [{"text": {"content": f"[{today}] {display_title}"}}]},
+                  "URL": {"url": podcast_url},
+                  "날짜": {"date": {"start": today}},
+                  "지역": {"select": {"name": "${{ steps.phase.outputs.podcast_region }}"}},
+                  "난이도": {"select": {"name": "C1"}},
+                  "자료 유형": {"select": {"name": "팟캐스트"}},
+                  "학습 영역": {"select": {"name": "청해"}},
+                  "메모": {"rich_text": [{"text": {"content": podcast_memo}}]}
+              }
+          }
+
+          try:
+              response = requests.post(
+                  "https://api.notion.com/v1/pages",
+                  headers=headers,
+                  json=podcast_payload
+              )
+              if response.status_code == 200:
+                  print(f"✅ 청해 자료 추가 성공: {display_title}")
+              else:
+                  print(f"❌ 청해 자료 추가 실패: {response.text}")
+          except Exception as e:
+              print(f"청해 자료 전송 오류: {e}")
+          EOF
+
+      - name: Send detailed notification
+        if: success()
+        run: |
+          echo "🎉 ${{ steps.phase.outputs.date }} (${{ steps.phase.outputs.weekday_name }}) 스페인어 학습 자료 자동 수집 완료!"
+          echo ""
+          echo "📖 독해 자료:"
+          echo "   제목: ${{ steps.materials.outputs.article_title }}"
+          echo "   출처: ${{ steps.phase.outputs.reading_source }}"
+          echo "   난이도: ${{ steps.phase.outputs.reading_difficulty }}"
+          echo ""
+          echo "🎧 청해 자료:"
+          echo "   제목: ${{ steps.phase.outputs.podcast_name }} Ep.${{ steps.materials.outputs.episode_number }}"
+          echo "   지역: ${{ steps.phase.outputs.podcast_region }}"
+          echo "   링크: Apple Podcasts 앱에서 재생 가능"
+          echo ""
+          echo "📅 학습 주차: ${{ steps.phase.outputs.week_num }}주차"
+          echo "💡 팁: 팟캐스트는 Apple Podcasts 앱을 통해 접속하시면 원활하게 재생됩니다!"
