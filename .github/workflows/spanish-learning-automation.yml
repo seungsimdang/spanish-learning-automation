@@ -223,6 +223,8 @@ jobs:
               if content_type == "article":
                   category = data.get('category', '일반')
                   preview = data.get('preview', '')[:100] + '...' if data.get('preview') else ''
+                  # 따옴표 이스케이프 처리
+                  preview = preview.replace('"', '\\"').replace("'", "\\'")
                   
                   return (f"📰 {category} 분야 기사 "
                          f"📅 발행: {data.get('published', '오늘')} "
@@ -239,7 +241,9 @@ jobs:
                   
                   expressions_text = ""
                   if expressions:
-                      expr_list = "', '".join(expressions[:2])
+                      # 따옴표 이스케이프 처리
+                      clean_expressions = [expr.replace('"', '\\"').replace("'", "\\'") for expr in expressions[:2]]
+                      expr_list = "', '".join(clean_expressions)
                       expressions_text = f"💡 핵심 표현: '{expr_list}' "
                   
                   return (f"🎧 {podcast_name} Ep.{episode_num} - {weekday_name} 스페인 팟캐스트 "
@@ -339,14 +343,16 @@ jobs:
           # 결과 출력
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               if article_data:
-                  article_title_clean = article_data['title'].replace('\n', ' ').replace('\r', ' ')
+                  # 따옴표와 특수문자 이스케이프 처리
+                  article_title_clean = article_data['title'].replace('\n', ' ').replace('\r', ' ').replace('"', '\\"').replace("'", "\\'")
                   article_memo_clean = create_detailed_memo('article', article_data, weekday_name)
                   f.write(f"article_title={article_title_clean}\n")
                   f.write(f"article_url={article_data['url']}\n")
                   f.write(f"article_memo={article_memo_clean}\n")
               
               if podcast_data:
-                  podcast_title_clean = podcast_data['title'].replace('\n', ' ').replace('\r', ' ')
+                  # 따옴표와 특수문자 이스케이프 처리
+                  podcast_title_clean = podcast_data['title'].replace('\n', ' ').replace('\r', ' ').replace('"', '\\"').replace("'", "\\'")
                   podcast_memo_clean = create_detailed_memo('podcast', podcast_data, weekday_name)
                   f.write(f"podcast_title={podcast_title_clean}\n")
                   f.write(f"podcast_url={podcast_data['url']}\n")
