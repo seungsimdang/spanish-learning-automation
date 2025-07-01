@@ -222,12 +222,12 @@ jobs:
           def create_detailed_memo(content_type, data, weekday_name):
               if content_type == "article":
                   category = data.get('category', '일반')
-                  preview = data.get('preview', '')[:150] + '...' if data.get('preview') else ''
+                  preview = data.get('preview', '')[:100] + '...' if data.get('preview') else ''
                   
-                  return (f"📰 {category} 분야 기사\n"
-                         f"📅 발행: {data.get('published', '오늘')}\n"
-                         f"🎯 학습목표: 15분 독해, 어휘 5개 정리\n"
-                         f"💡 미리보기: {preview}\n"
+                  return (f"📰 {category} 분야 기사 "
+                         f"📅 발행: {data.get('published', '오늘')} "
+                         f"🎯 학습목표: 15분 독해, 어휘 5개 정리 "
+                         f"💡 미리보기: {preview} "
                          f"📝 권장: 모르는 단어는 노트에 정리하며 읽기")
 
               elif content_type == "podcast":
@@ -240,14 +240,14 @@ jobs:
                   expressions_text = ""
                   if expressions:
                       expr_list = "', '".join(expressions[:2])
-                      expressions_text = f"💡 핵심 표현: '{expr_list}'\n"
+                      expressions_text = f"💡 핵심 표현: '{expr_list}' "
                   
-                  return (f"🎧 {podcast_name} Ep.{episode_num} - {weekday_name} 스페인 팟캐스트\n"
-                         f"⏱️ 재생시간: {duration}\n"
-                         f"🎯 학습목표: 표현 5개 정리, 25분 청취 목표\n"
-                         f"🌍 주제: {topic}\n"
+                  return (f"🎧 {podcast_name} Ep.{episode_num} - {weekday_name} 스페인 팟캐스트 "
+                         f"⏱️ 재생시간: {duration} (전체 25분 청취 계획) "
+                         f"🎯 학습목표: 금융 어휘 5개 정리 "
+                         f"🌍 주제: {topic} "
                          f"{expressions_text}"
-                         f"📝 권장: 전사본 활용하여 반복 청취 (Apple Podcasts 앱 사용 권장)")
+                         f"📝 권장: 핵심 어휘에 집중하여 청취")
 
           # 기사 수집
           reading_source = "${{ steps.phase.outputs.reading_source }}"
@@ -266,8 +266,10 @@ jobs:
               if feed.entries:
                   latest = feed.entries[0]
                   summary = latest.get('summary', '')
+                  # 제목 정리 (escape sequence 제거)
+                  clean_title = latest.title.replace('&quot;', '"').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
                   article_data = {
-                      'title': latest.title,
+                      'title': clean_title,
                       'url': latest.link,
                       'published': latest.get('published', ''),
                       'category': extract_category_from_summary(summary),
@@ -294,15 +296,24 @@ jobs:
                   apple_base = "${{ steps.phase.outputs.podcast_apple_base }}"
                   episode_link = latest.link
                   
-                  episode_id_match = re.search(r'/(\d+)', episode_link)
-                  if episode_id_match:
-                      apple_episode_link = f"{apple_base}?i={episode_id_match.group(1)}"
-                  else:
+                  # Apple Podcasts 링크 생성 개선
+                  if 'npr.org' in episode_link or 'radioambulante' in episode_link:
+                      # Radio Ambulante의 경우 기본 링크 사용
                       apple_episode_link = apple_base
+                  else:
+                      # 다른 팟캐스트는 에피소드 ID 추출 시도
+                      episode_id_match = re.search(r'/(\d+)', episode_link)
+                      if episode_id_match:
+                          apple_episode_link = f"{apple_base}?i={episode_id_match.group(1)}"
+                      else:
+                          apple_episode_link = apple_base
+                  
+                  # 제목 정리 (escape sequence 제거)
+                  clean_title = latest.title.replace('&quot;', '"').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
                   
                   podcast_data = {
                       'podcast_name': podcast_name,
-                      'title': latest.title,
+                      'title': clean_title,
                       'url': apple_episode_link,
                       'original_url': episode_link,
                       'duration': duration,
@@ -325,18 +336,18 @@ jobs:
                   'region': "${{ steps.phase.outputs.podcast_region }}"
               }
 
-          # 결과 출력 (개행문자 제거)
+          # 결과 출력
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               if article_data:
                   article_title_clean = article_data['title'].replace('\n', ' ').replace('\r', ' ')
-                  article_memo_clean = create_detailed_memo('article', article_data, weekday_name).replace('\n', ' ')
+                  article_memo_clean = create_detailed_memo('article', article_data, weekday_name)
                   f.write(f"article_title={article_title_clean}\n")
                   f.write(f"article_url={article_data['url']}\n")
                   f.write(f"article_memo={article_memo_clean}\n")
               
               if podcast_data:
                   podcast_title_clean = podcast_data['title'].replace('\n', ' ').replace('\r', ' ')
-                  podcast_memo_clean = create_detailed_memo('podcast', podcast_data, weekday_name).replace('\n', ' ')
+                  podcast_memo_clean = create_detailed_memo('podcast', podcast_data, weekday_name)
                   f.write(f"podcast_title={podcast_title_clean}\n")
                   f.write(f"podcast_url={podcast_data['url']}\n")
                   f.write(f"podcast_memo={podcast_memo_clean}\n")
