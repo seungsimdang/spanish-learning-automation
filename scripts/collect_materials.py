@@ -6,12 +6,64 @@ import os
 import sys
 import requests
 import feedparser
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import time
 from spanish_vocabulary import search_vocabulary
+
+def is_episode_recent(published_date, max_days_old=2):
+    """에피소드가 최근 며칠 이내에 발행되었는지 확인"""
+    try:
+        if not published_date:
+            return True  # 날짜 정보가 없으면 허용
+        
+        # feedparser가 파싱한 날짜를 datetime으로 변환
+        if hasattr(published_date, 'tm_year'):  # struct_time 객체인 경우
+            episode_date = datetime(*published_date[:6])
+        elif isinstance(published_date, str):
+            # 문자열인 경우 파싱 시도
+            from email.utils import parsedate_tz
+            import calendar
+            parsed = parsedate_tz(published_date)
+            if parsed:
+                episode_date = datetime(*parsed[:6])
+            else:
+                return True  # 파싱 실패시 허용
+        else:
+            return True
+        
+        current_date = datetime.now()
+        days_diff = (current_date - episode_date).days
+        
+        print(f"DEBUG: 에피소드 날짜 확인 - 발행일: {episode_date.strftime('%Y-%m-%d')}, 현재: {current_date.strftime('%Y-%m-%d')}, 차이: {days_diff}일")
+        
+        return days_diff <= max_days_old
+        
+    except Exception as e:
+        print(f"날짜 확인 오류: {e}")
+        return True  # 오류 시 허용
+
+def is_duplicate_content(title, existing_titles=[]):
+    """제목 중복 확인"""
+    if not existing_titles:
+        return False
+    
+    # 제목 정규화 (특수문자, 공백 제거)
+    normalized_title = re.sub(r'[^\w\s]', '', title.lower()).strip()
+    
+    for existing_title in existing_titles:
+        normalized_existing = re.sub(r'[^\w\s]', '', existing_title.lower()).strip()
+        
+        # 80% 이상 유사하면 중복으로 판단
+        similarity = len(set(normalized_title.split()) & set(normalized_existing.split())) / max(len(normalized_title.split()), len(normalized_existing.split()))
+        
+        if similarity >= 0.8:
+            print(f"DEBUG: 중복 콘텐츠 감지 - 기존: {existing_title}, 새로운: {title} (유사도: {similarity:.2f})")
+            return True
+    
+    return False
 
 def analyze_text_difficulty(content):
     """Analyze text difficulty and return appropriate CEFR level"""
@@ -704,8 +756,17 @@ def main():
                     print(f"백업 피드 상태: {backup_status}, 에피소드 개수: {len(backup_feed.entries)}")
                     
                     if backup_feed.entries:
-                        latest = backup_feed.entries[0]
-                        print(f"백업 피드에서 찾은 최신 에피소드:")
+                        # 백업 피드에서도 최근 에피소드 확인
+                        recent_episodes = []
+                        for entry in backup_feed.entries[:3]:  # 백업에서는 3개만 확인
+                            if is_episode_recent(entry.get('published_parsed')):
+                                recent_episodes.append(entry)
+                        
+                        if not recent_episodes:
+                            recent_episodes = [backup_feed.entries[0]]  # 최신 에피소드라도 사용
+                        
+                        latest = recent_episodes[0]
+                        print(f"백업 피드에서 선택된 에피소드:")
                         print(f"  제목: {latest.title}")
                         print(f"  발행일: {latest.get('published', 'N/A')}")
                         print(f"  RSS 에피소드 URL: {latest.link}")
@@ -775,9 +836,26 @@ def main():
                     continue
         
         elif feed.entries:
-            latest = feed.entries[0]
-            print(f"최신 에피소드 정보:")
-            print(f"- 제목: {latest.title}")
+            print(f"피드에서 최신 에피소드 확인 중...")
+            
+            # 최근 며칠 이내의 에피소드만 필터링
+            recent_episodes = []
+            for entry in feed.entries[:5]:  # 최근 5개 에피소드만 확인
+                print(f"  에피소드 확인: {entry.title}")
+                print(f"    발행일: {entry.get('published', 'N/A')}")
+                
+                if is_episode_recent(entry.get('published_parsed')):
+                    recent_episodes.append(entry)
+                    print(f"    ✅ 최근 에피소드로 확인됨")
+                else:
+                    print(f"    ❌ 오래된 에피소드")
+            
+            if not recent_episodes:
+                print("⚠️  최근 에피소드가 없습니다. 가장 최신 에피소드를 사용합니다.")
+                recent_episodes = [feed.entries[0]]
+            
+            latest = recent_episodes[0]
+            print(f"선택된 에피소드: {latest.title}")
             print(f"- 링크: {latest.link}")
             print(f"- 발행일: {latest.get('published', 'N/A')}")
             print(f"- 요약 길이: {len(latest.get('summary', ''))}")

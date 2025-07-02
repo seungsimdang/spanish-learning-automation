@@ -43,6 +43,14 @@ def get_database_properties(database_id, headers):
 def create_notion_page(title, url, content_type, memo, category="", vocabulary="", duration="", difficulty=""):
     """Notion 페이지 생성"""
     
+    # 중복 페이지 확인
+    print(f"\n🔍 중복 페이지 확인 중: {title}")
+    if check_duplicate_page(title, content_type):
+        print(f"⚠️  중복 페이지가 이미 존재합니다. 페이지 생성을 건너뜁니다.")
+        return None
+    
+    print(f"✅ 중복 없음. 페이지 생성을 계속합니다.")
+    
     # Notion API 설정
     NOTION_TOKEN = os.environ.get('NOTION_TOKEN')
     DATABASE_ID = os.environ.get('NOTION_DATABASE_ID')
@@ -385,6 +393,96 @@ def create_notion_page(title, url, content_type, memo, category="", vocabulary="
     except Exception as e:
         print(f"Notion API 오류: {e}")
         return None
+
+def check_duplicate_page(title, content_type):
+    """Notion에서 중복 페이지가 있는지 확인"""
+    try:
+        NOTION_TOKEN = os.environ.get('NOTION_TOKEN')
+        DATABASE_ID = os.environ.get('NOTION_DATABASE_ID')
+        
+        if not NOTION_TOKEN or not DATABASE_ID:
+            print("중복 확인: Notion 설정이 없습니다.")
+            return False
+        
+        headers = {
+            'Authorization': f'Bearer {NOTION_TOKEN}',
+            'Content-Type': 'application/json',
+            'Notion-Version': '2022-06-28'
+        }
+        
+        # 최근 7일간의 페이지만 검색 (성능 최적화)
+        from datetime import datetime, timedelta
+        week_ago = (datetime.now() - timedelta(days=7)).isoformat()
+        
+        # 제목으로 검색
+        search_payload = {
+            "filter": {
+                "and": [
+                    {
+                        "property": "title",
+                        "title": {
+                            "contains": title[:50]  # 제목의 첫 50자로 검색
+                        }
+                    },
+                    {
+                        "property": "created_time",
+                        "created_time": {
+                            "after": week_ago
+                        }
+                    }
+                ]
+            },
+            "sorts": [
+                {
+                    "property": "created_time",
+                    "direction": "descending"
+                }
+            ]
+        }
+        
+        response = requests.post(
+            f'https://api.notion.com/v1/databases/{DATABASE_ID}/query',
+            headers=headers,
+            json=search_payload
+        )
+        
+        if response.status_code == 200:
+            results = response.json().get('results', [])
+            print(f"DEBUG: 중복 검색 결과 - {len(results)}개 페이지 발견")
+            
+            for result in results:
+                existing_title = ""
+                title_prop = result.get('properties', {})
+                for prop_name, prop_value in title_prop.items():
+                    if prop_value.get('type') == 'title':
+                        title_texts = prop_value.get('title', [])
+                        if title_texts:
+                            existing_title = title_texts[0].get('text', {}).get('content', '')
+                        break
+                
+                if existing_title:
+                    # 제목 유사도 확인 (90% 이상 유사하면 중복)
+                    title_words = set(title.lower().split())
+                    existing_words = set(existing_title.lower().split())
+                    
+                    if title_words and existing_words:
+                        similarity = len(title_words & existing_words) / len(title_words | existing_words)
+                        
+                        if similarity >= 0.9:
+                            print(f"🔍 중복 페이지 발견!")
+                            print(f"   새 제목: {title}")
+                            print(f"   기존 제목: {existing_title}")
+                            print(f"   유사도: {similarity:.2f}")
+                            return True
+            
+            return False
+        else:
+            print(f"중복 검색 실패: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        print(f"중복 확인 오류: {e}")
+        return False
 
 def main():
     print("=== Notion 페이지 생성 시작 ===")
