@@ -113,7 +113,7 @@ jobs:
               f.write(f"weekday_name={['월요일', '화요일', '수요일', '목요일', '금요일', '토요일', '일요일'][weekday]}\n")
           EOF
 
-      - name: Collect articles and podcast episodes with detailed info
+      - name: Collect articles and podcast episodes with full content analysis
         id: materials
         run: |
           python3 << 'EOF'
@@ -124,21 +124,227 @@ jobs:
           import re
           from bs4 import BeautifulSoup
           from urllib.parse import urljoin
+          import time
 
-          def extract_category_from_summary(summary):
-              keywords = {
-                  '정치': ['gobierno', 'política', 'elecciones', 'parlamento', 'ministro', 'rey'],
-                  '경제': ['economía', 'banco', 'euro', 'empleo', 'crisis', 'mercado', 'dinero', 'trabajo'],
-                  '사회': ['sociedad', 'educación', 'sanidad', 'vivienda', 'familia', 'salud'],
-                  '스포츠': ['fútbol', 'Real Madrid', 'Barcelona', 'Liga', 'deporte', 'partido'],
-                  '기술': ['tecnología', 'internet', 'móvil', 'digital', 'app', 'inteligencia'],
-                  '문화': ['cultura', 'arte', 'música', 'teatro', 'festival', 'libro']
+          def get_article_content(url):
+              """실제 기사 URL에 접속해서 본문 내용을 가져오는 함수"""
+              try:
+                  headers = {
+                      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                  }
+                  
+                  response = requests.get(url, headers=headers, timeout=10)
+                  response.raise_for_status()
+                  response.encoding = 'utf-8'
+                  
+                  soup = BeautifulSoup(response.content, 'html.parser')
+                  
+                  # 사이트별 본문 추출 로직
+                  content = ""
+                  
+                  if '20minutos.es' in url:
+                      # 20minutos 본문 추출
+                      article_body = soup.find('div', class_='article-text') or soup.find('div', class_='content')
+                      if article_body:
+                          paragraphs = article_body.find_all(['p', 'div'])
+                          content = ' '.join([p.get_text().strip() for p in paragraphs if p.get_text().strip()])
+                  
+                  elif 'elpais.com' in url:
+                      # El País 본문 추출
+                      article_body = soup.find('div', {'data-dtm-region': 'articulo_cuerpo'}) or \
+                                   soup.find('div', class_='a_c clearfix') or \
+                                   soup.find('div', class_='articulo-cuerpo')
+                      if article_body:
+                          paragraphs = article_body.find_all('p')
+                          content = ' '.join([p.get_text().strip() for p in paragraphs if p.get_text().strip()])
+                  
+                  # 일반적인 기사 본문 추출 (fallback)
+                  if not content:
+                      # 일반적인 article 태그나 main 태그에서 추출
+                      article = soup.find('article') or soup.find('main')
+                      if article:
+                          paragraphs = article.find_all('p')
+                          content = ' '.join([p.get_text().strip() for p in paragraphs if p.get_text().strip()][:10])  # 처음 10개 문단만
+                  
+                  # 내용이 너무 짧으면 다른 방법 시도
+                  if len(content) < 200:
+                      all_paragraphs = soup.find_all('p')
+                      content = ' '.join([p.get_text().strip() for p in all_paragraphs if len(p.get_text().strip()) > 50][:8])
+                  
+                  return content[:2000]  # 처음 2000자만 반환
+                  
+              except Exception as e:
+                  print(f"기사 내용 추출 오류: {e}")
+                  return ""
+
+          def extract_vocabulary_from_content(content, difficulty="B2"):
+              """실제 기사 내용에서 학습자 수준에 맞는 핵심 어휘를 추출"""
+              if not content:
+                  return []
+              
+              # 수준별 어휘 추출 기준
+              if difficulty == "B2":
+                  # B2 수준: 중급 어휘, 일상적이지 않은 표현들
+                  target_patterns = [
+                      # 동사류
+                      r'\b(desarrollar|establecer|implementar|generar|promover|fortalecer|consolidar|impulsar|fomentar|garantizar)\b',
+                      # 명사류  
+                      r'\b(iniciativa|propuesta|medida|estrategia|política|programa|proyecto|inversión|desarrollo|crecimiento)\b',
+                      # 형용사류
+                      r'\b(fundamental|esencial|crucial|significativo|relevante|considerable|notable|destacado|principal|prioritario)\b',
+                      # 연결어
+                      r'\b(además|asimismo|por tanto|sin embargo|no obstante|en consecuencia|por consiguiente|en definitiva)\b',
+                      # 기관/조직 관련
+                      r'\b(entidad|organismo|institución|administración|departamento|ministerio|ayuntamiento|comunidad)\b'
+                  ]
+              elif difficulty == "C1":
+                  # C1 수준: 고급 어휘, 전문적/학술적 표현들
+                  target_patterns = [
+                      # 고급 동사
+                      r'\b(implementar|consolidar|incrementar|optimizar|diversificar|potenciar|materializar|vehicular|canalizar)\b',
+                      # 전문 명사
+                      r'\b(sostenibilidad|competitividad|rentabilidad|eficiencia|transparencia|gobernanza|paradigma|metodología)\b',
+                      # 고급 형용사
+                      r'\b(innovador|sostenible|competitivo|eficiente|transparente|inclusivo|participativo|colaborativo)\b',
+                      # 학술적 연결어
+                      r'\b(en este sentido|cabe destacar|es preciso|conviene señalar|resulta evidente|se constata)\b',
+                      # 전문 분야 용어
+                      r'\b(digitalización|transformación|modernización|reestructuración|reconversión|reorientación)\b'
+                  ]
+              else:
+                  # 기본 B2 패턴 사용
+                  target_patterns = [
+                      r'\b(desarrollar|establecer|implementar|medida|estrategia|fundamental|además|sin embargo)\b'
+                  ]
+              
+              found_vocab = []
+              content_lower = content.lower()
+              
+              # 어휘 추출 및 의미 매핑
+              vocab_meanings = {
+                  # B2 수준 어휘
+                  'desarrollar': '개발하다, 발전시키다',
+                  'establecer': '설립하다, 확립하다',
+                  'implementar': '시행하다, 구현하다',
+                  'generar': '생성하다, 만들어내다',
+                  'promover': '촉진하다, 장려하다',
+                  'fortalecer': '강화하다',
+                  'consolidar': '통합하다, 견고히 하다',
+                  'impulsar': '추진하다, 촉진하다',
+                  'fomentar': '장려하다, 촉진하다',
+                  'garantizar': '보장하다',
+                  'iniciativa': '계획, 주도권',
+                  'propuesta': '제안',
+                  'medida': '조치, 대책',
+                  'estrategia': '전략',
+                  'política': '정책',
+                  'programa': '프로그램',
+                  'proyecto': '프로젝트',
+                  'inversión': '투자',
+                  'desarrollo': '발전, 개발',
+                  'crecimiento': '성장',
+                  'fundamental': '기본적인, 근본적인',
+                  'esencial': '필수적인',
+                  'crucial': '중요한, 결정적인',
+                  'significativo': '의미있는, 중요한',
+                  'relevante': '관련있는, 중요한',
+                  'considerable': '상당한',
+                  'notable': '주목할 만한',
+                  'destacado': '뛰어난, 두드러진',
+                  'principal': '주요한',
+                  'prioritario': '우선적인',
+                  'además': '게다가, 또한',
+                  'asimismo': '마찬가지로',
+                  'por tanto': '따라서',
+                  'sin embargo': '그러나',
+                  'no obstante': '그럼에도 불구하고',
+                  'en consecuencia': '결과적으로',
+                  'por consiguiente': '따라서',
+                  'en definitiva': '결국',
+                  'entidad': '기관, 단체',
+                  'organismo': '기관, 조직',
+                  'institución': '기관, 제도',
+                  'administración': '행정부',
+                  'departamento': '부서',
+                  'ministerio': '부 (정부기관)',
+                  'ayuntamiento': '시청',
+                  'comunidad': '지역사회, 공동체',
+                  
+                  # C1 수준 어휘
+                  'incrementar': '증가시키다',
+                  'optimizar': '최적화하다',
+                  'diversificar': '다양화하다',
+                  'potenciar': '강화하다, 잠재력을 키우다',
+                  'materializar': '실현하다',
+                  'vehicular': '전달하다, 수단이 되다',
+                  'canalizar': '경로를 제공하다',
+                  'sostenibilidad': '지속가능성',
+                  'competitividad': '경쟁력',
+                  'rentabilidad': '수익성',
+                  'eficiencia': '효율성',
+                  'transparencia': '투명성',
+                  'gobernanza': '거버넌스, 통치',
+                  'paradigma': '패러다임',
+                  'metodología': '방법론',
+                  'innovador': '혁신적인',
+                  'sostenible': '지속가능한',
+                  'competitivo': '경쟁적인',
+                  'eficiente': '효율적인',
+                  'transparente': '투명한',
+                  'inclusivo': '포용적인',
+                  'participativo': '참여적인',
+                  'colaborativo': '협력적인',
+                  'digitalización': '디지털화',
+                  'transformación': '변화, 변혁',
+                  'modernización': '현대화',
+                  'reestructuración': '구조조정',
+                  'reconversión': '전환',
+                  'reorientación': '방향 전환'
               }
               
-              summary_lower = summary.lower()
+              # 패턴 매칭으로 어휘 찾기
+              for pattern in target_patterns:
+                  matches = re.findall(pattern, content_lower, re.IGNORECASE)
+                  for match in matches:
+                      if match.lower() in vocab_meanings and match.lower() not in [v.split(' (')[0].lower() for v in found_vocab]:
+                          meaning = vocab_meanings[match.lower()]
+                          found_vocab.append(f"{match} ({meaning})")
+              
+              # 중복 제거 및 최대 5개 반환
+              unique_vocab = []
+              seen = set()
+              for vocab in found_vocab:
+                  word = vocab.split(' (')[0].lower()
+                  if word not in seen:
+                      unique_vocab.append(vocab)
+                      seen.add(word)
+                      if len(unique_vocab) >= 5:
+                          break
+              
+              return unique_vocab
+
+          def extract_category_from_content(title, content):
+              """제목과 내용을 기반으로 카테고리 분류"""
+              full_text = (title + " " + content).lower()
+              
+              keywords = {
+                  '정치': ['gobierno', 'política', 'elecciones', 'parlamento', 'ministro', 'rey', 'presidente', 'votación', 'congreso'],
+                  '경제': ['economía', 'banco', 'euro', 'empleo', 'crisis', 'mercado', 'dinero', 'trabajo', 'empresa', 'inversión'],
+                  '사회': ['sociedad', 'educación', 'sanidad', 'vivienda', 'familia', 'salud', 'población', 'ciudadanos'],
+                  '스포츠': ['fútbol', 'real madrid', 'barcelona', 'liga', 'deporte', 'partido', 'atletico', 'champions'],
+                  '기술': ['tecnología', 'internet', 'móvil', 'digital', 'app', 'inteligencia', 'innovación'],
+                  '문화': ['cultura', 'arte', 'música', 'teatro', 'festival', 'libro', 'cine', 'exposición'],
+                  '국제': ['internacional', 'mundial', 'europa', 'américa', 'china', 'estados unidos', 'unión europea']
+              }
+              
+              category_scores = {}
               for category, words in keywords.items():
-                  if any(word in summary_lower for word in words):
-                      return category
+                  score = sum(1 for word in words if word in full_text)
+                  if score > 0:
+                      category_scores[category] = score
+              
+              if category_scores:
+                  return max(category_scores, key=category_scores.get)
               return '일반'
 
           def extract_episode_number(title):
@@ -209,182 +415,27 @@ jobs:
                       return topic
               return '일반 주제'
 
-          def get_key_expressions(title, summary=""):
-              content = title + " " + summary
-              
-              # 스페인어 핵심 표현과 한국어 뜻 사전
-              expression_dict = {
-                  # 일반적인 관용 표현
-                  'caer en la trampa': '함정에 빠지다',
-                  'perder los ahorros': '저축을 잃다',
-                  'hacer caso': '신경 쓰다, 주의를 기울이다',
-                  'darse cuenta': '깨닫다, 알아차리다',
-                  'tener en cuenta': '고려하다, 염두에 두다',
-                  'por si acaso': '혹시 모르니까',
-                  'de vez en cuando': '가끔',
-                  'estar de acuerdo': '동의하다',
-                  'tener razón': '옳다, 맞다',
-                  'hacer falta': '필요하다',
-                  'echar de menos': '그리워하다',
-                  'llevarse bien': '잘 지내다',
-                  'ponerse en contacto': '연락하다',
-                  'tomar el pelo': '놀리다, 농담하다',
-                  'meter la pata': '실수하다',
-                  'quedarse sin palabras': '말문이 막히다',
-                  'estar hasta las narices': '지긋지긋하다',
-                  'dar igual': '상관없다',
-                  'costar trabajo': '힘들다',
-                  'hacer gracia': '재미있다',
-                  'dar la lata': '귀찮게 하다',
-                  'perder el tiempo': '시간을 낭비하다',
-                  'tener suerte': '운이 좋다',
-                  'estar harto': '지긋지긋하다',
-                  'dar miedo': '무섭다',
-                  'tener ganas': '하고 싶다',
-                  'hacer cola': '줄을 서다',
-                  'estar de moda': '유행하다',
-                  'salir adelante': '앞으로 나아가다',
-                  'llevarse un susto': '놀라다',
-                  'tener prisa': '급하다',
-                  'hacer daño': '해를 끼치다',
-                  'dar las gracias': '감사하다',
-                  'tener cuidado': '조심하다',
-                  'estar de broma': '농담하다',
-                  'dar pena': '안타깝다',
-                  'tener éxito': '성공하다',
-                  'hacer el ridículo': '웃음거리가 되다',
-                  'dar vergüenza': '부끄럽다',
-                  'tener hambre': '배고프다',
-                  'estar de viaje': '여행 중이다',
-                  'dar la razón': '동의하다',
-                  'tener sed': '목마르다',
-                  'estar de vuelta': '돌아오다',
-                  'tener frío': '춥다',
-                  'estar de pie': '서 있다',
-                  'hacer ruido': '소음을 내다',
-                  'dar calor': '따뜻하다',
-                  'tener sueño': '졸리다',
-                  'estar de mal humor': '기분이 나쁘다',
-                  'hacer ejercicio': '운동하다',
-                  'dar asco': '역겹다',
-                  
-                  # 연결어 표현
-                  'al fin y al cabo': '결국',
-                  'a fin de cuentas': '결국',
-                  'en resumidas cuentas': '요약하면',
-                  'por lo tanto': '따라서',
-                  'sin embargo': '그러나',
-                  'por consiguiente': '그 결과',
-                  'a pesar de': '~에도 불구하고',
-                  'con tal de que': '~하는 한',
-                  'siempre y cuando': '~하는 한',
-                  'a no ser que': '~하지 않는 한',
-                  'con el fin de': '~하기 위해',
-                  'en cuanto a': '~에 관해서',
-                  'en lo que respecta': '~에 관해서',
-                  'por lo que respecta': '~에 관해서',
-                  'en lo que se refiere': '~에 관해서',
-                  'por otro lado': '반면에',
-                  'de todos modos': '어쨌든',
-                  'en cualquier caso': '어떤 경우든',
-                  'de todas formas': '어쨌든',
-                  'en todo caso': '어떤 경우든',
-                  
-                  # 구어체 표현
-                  'ponerse las pilas': '정신차리다',
-                  'tirar la casa por la ventana': '돈을 물 쓰듯 하다',
-                  'estar en las nubes': '딴 생각에 빠져있다',
-                  'costar un ojo de la cara': '매우 비싸다',
-                  'ser pan comido': '식은 죽 먹기다',
-                  'llover a cántaros': '비가 억수로 내리다',
-                  'ser una ganga': '싸게 사다',
-                  'estar como una cabra': '미쳤다',
-                  'estar en babia': '딴 생각에 빠져있다',
-                  'ser un hueso duro de roer': '만만치 않다',
-                  
-                  # 정치/사회 표현
-                  'apoyar la propuesta': '제안을 지지하다',
-                  'buscar un entendimiento': '합의를 찾다',
-                  'reflexionar sobre': '~에 대해 숙고하다',
-                  'desdeñar la oferta': '제안을 무시하다',
-                  'abrir el diálogo': '대화를 시작하다',
-                  'tender puentes': '가교를 놓다',
-                  'romper el consenso': '합의를 깨뜨리다',
-                  'fortalecer la democracia': '민주주의를 강화하다',
-                  'garantizar la estabilidad': '안정을 보장하다',
-                  'promover el cambio': '변화를 촉진하다',
-                  
-                  # 경제/금융 표현
-                  'productos financieros': '금융 상품',
-                  'preferentes': '우선주',
-                  'crisis económica': '경제 위기',
-                  'mercado financiero': '금융 시장',
-                  'inversión segura': '안전한 투자',
-                  'riesgo elevado': '높은 위험',
-                  'rentabilidad': '수익성',
-                  'entidades bancarias': '은행 기관',
-                  'supervisión financiera': '금융 감독',
-                  'protección al consumidor': '소비자 보호'
-              }
-              
-              # 컨텐츠에서 표현 찾기
-              found_expressions = []
-              content_lower = content.lower()
-              
-              for expression, meaning in expression_dict.items():
-                  if expression.lower() in content_lower:
-                      found_expressions.append(f"{expression} ({meaning})")
-              
-              # 추가적으로 동사 + 명사 조합이나 중요한 구문 찾기
-              important_patterns = [
-                  r'\b(se abre a \w+)\b',  # "se abre a reflexionar" 같은 패턴
-                  r'\b(no buscar \w+)\b',   # "no buscar un entendimiento" 같은 패턴
-                  r'\b(desdeñar \w+)\b',    # "desdeñar la oferta" 같은 패턴
-                  r'\b(tender \w+)\b',      # "tender puentes" 같은 패턴
-                  r'\b(fortalecer \w+)\b',  # "fortalecer la democracia" 같은 패턴
-              ]
-              
-              for pattern in important_patterns:
-                  matches = re.findall(pattern, content, re.IGNORECASE)
-                  for match in matches:
-                      if match not in [expr.split(' (')[0] for expr in found_expressions]:
-                          # 간단한 번역 추가
-                          if 'se abre a' in match:
-                              found_expressions.append(f"{match} (~에 열려있다)")
-                          elif 'no buscar' in match:
-                              found_expressions.append(f"{match} (~을 찾지 않다)")
-                          elif 'desdeñar' in match:
-                              found_expressions.append(f"{match} (~을 무시하다)")
-                          elif 'tender' in match:
-                              found_expressions.append(f"{match} (~을 내밀다)")
-                          elif 'fortalecer' in match:
-                              found_expressions.append(f"{match} (~을 강화하다)")
-              
-              # 중복 제거 및 최대 2개 반환
-              unique_expressions = list(dict.fromkeys(found_expressions))
-              return unique_expressions[:2]
-
           def create_detailed_memo(content_type, data, weekday_name):
               if content_type == "article":
                   category = data.get('category', '일반')
-                  expressions = data.get('expressions', [])
+                  vocabulary = data.get('vocabulary', [])
+                  difficulty = data.get('difficulty', 'B2')
                   
-                  expressions_text = ""
-                  if expressions:
-                      expr_list = ", ".join(expressions[:2])
-                      expressions_text = f"💡 핵심 표현: {expr_list} "
+                  vocab_text = ""
+                  if vocabulary:
+                      vocab_list = ", ".join(vocabulary[:3])  # 처음 3개만 표시
+                      vocab_text = f"📚 핵심 어휘: {vocab_list} "
                   
-                  return (f"📰 {category} 분야 기사 "
+                  return (f"📰 {category} 분야 기사 ({difficulty} 수준) "
                          f"📅 발행: {data.get('published', '오늘')} "
-                         f"🎯 학습목표: 15분 독해, 어휘 5개 정리 "
-                         f"{expressions_text}"
-                         f"📝 권장: 모르는 단어는 노트에 정리하며 읽기")
+                         f"🎯 학습목표: 15분 독해, {difficulty} 수준 어휘 정리 "
+                         f"{vocab_text}"
+                         f"📝 권장: 실제 기사 내용 분석을 통한 맞춤 어휘 학습")
 
               elif content_type == "podcast":
                   podcast_name = data.get('podcast_name', '')
                   duration = data.get('duration', '15-25분')
                   topic = data.get('topic', '일반 주제')
-                  expressions = data.get('expressions', [])
                   episode_num = data.get('episode_number', '')
                   
                   # 주제에 따른 학습목표 설정
@@ -416,21 +467,15 @@ jobs:
                   else:
                       listen_plan = "(25분 청취 목표)"
                   
-                  expressions_text = ""
-                  if expressions:
-                      # 표현들을 쉼표로 구분하여 표시 (한글 뜻 포함)
-                      expr_list = ", ".join(expressions[:2])
-                      expressions_text = f"💡 핵심 표현: {expr_list} "
-                  
                   return (f"🎧 {podcast_name} Ep.{episode_num} - {weekday_name} 스페인 팟캐스트 "
                          f"⏱️ 재생시간: {duration} {listen_plan} "
                          f"🎯 학습목표: {goal} 5개 정리 "
                          f"🌍 주제: {topic} "
-                         f"{expressions_text}"
                          f"📝 권장: 핵심 어휘에 집중하여 청취")
 
-          # 기사 수집
+          # 기사 수집 및 실제 내용 분석
           reading_source = "${{ steps.phase.outputs.reading_source }}"
+          reading_difficulty = "${{ steps.phase.outputs.reading_difficulty }}"
           article_data = None
 
           try:
@@ -442,22 +487,56 @@ jobs:
                   else:
                       feed_url = "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada"
               
+              print(f"RSS 피드에서 기사 정보 수집 중: {feed_url}")
               feed = feedparser.parse(feed_url)
+              
               if feed.entries:
                   latest = feed.entries[0]
-                  summary = latest.get('summary', '')
-                  # 제목 정리 (escape sequence 제거)
+                  article_url = latest.link
                   clean_title = latest.title.replace('&quot;', '"').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-                  # 기사에서도 핵심 표현 추출
-                  expressions = get_key_expressions(clean_title, summary)
-                  article_data = {
-                      'title': clean_title,
-                      'url': latest.link,
-                      'published': latest.get('published', ''),
-                      'category': extract_category_from_summary(summary),
-                      'preview': summary,
-                      'expressions': expressions
-                  }
+                  
+                  print(f"기사 URL 접속 중: {article_url}")
+                  # 실제 기사 내용 가져오기
+                  article_content = get_article_content(article_url)
+                  
+                  if article_content:
+                      print(f"기사 내용 분석 중... (내용 길이: {len(article_content)}자)")
+                      # 실제 내용에서 어휘 추출
+                      vocabulary = extract_vocabulary_from_content(article_content, reading_difficulty)
+                      category = extract_category_from_content(clean_title, article_content)
+                      
+                      print(f"추출된 어휘: {vocabulary}")
+                      print(f"분류된 카테고리: {category}")
+                      
+                      article_data = {
+                          'title': clean_title,
+                          'url': article_url,
+                          'published': latest.get('published', ''),
+                          'category': category,
+                          'vocabulary': vocabulary,
+                          'difficulty': reading_difficulty,
+                          'content_preview': article_content[:200] + "..." if len(article_content) > 200 else article_content
+                      }
+                  else:
+                      print("기사 내용을 가져올 수 없어 RSS 요약 사용")
+                      # 내용을 가져올 수 없으면 RSS 요약 사용
+                      summary = latest.get('summary', '')
+                      vocabulary = extract_vocabulary_from_content(summary, reading_difficulty)
+                      category = extract_category_from_content(clean_title, summary)
+                      
+                      article_data = {
+                          'title': clean_title,
+                          'url': article_url,
+                          'published': latest.get('published', ''),
+                          'category': category,
+                          'vocabulary': vocabulary,
+                          'difficulty': reading_difficulty,
+                          'content_preview': summary
+                      }
+                      
+              else:
+                  print("RSS 피드에서 기사를 찾을 수 없음")
+                  
           except Exception as e:
               print(f"기사 수집 오류: {e}")
 
@@ -468,179 +547,16 @@ jobs:
           podcast_data = None
 
           try:
+              print(f"팟캐스트 RSS 피드 수집 중: {podcast_rss}")
               feed = feedparser.parse(podcast_rss)
               if feed.entries:
                   latest = feed.entries[0]
                   episode_number = extract_episode_number(latest.title)
                   duration = extract_duration_from_feed(latest)
                   topic = extract_topic_keywords(latest.title, latest.get('summary', ''))
-                  expressions = get_key_expressions(latest.title, latest.get('summary', ''))
                   
                   apple_base = "${{ steps.phase.outputs.podcast_apple_base }}"
                   episode_link = latest.link
                   
                   # Apple Podcasts 링크 생성 개선
                   if 'npr.org' in episode_link or 'radioambulante' in episode_link:
-                      # Radio Ambulante의 경우 기본 링크 사용
-                      apple_episode_link = apple_base
-                  else:
-                      # 다른 팟캐스트는 에피소드 ID 추출 시도
-                      episode_id_match = re.search(r'/(\d+)', episode_link)
-                      if episode_id_match:
-                          apple_episode_link = f"{apple_base}?i={episode_id_match.group(1)}"
-                      else:
-                          apple_episode_link = apple_base
-                  
-                  # 제목 정리 (escape sequence 제거)
-                  clean_title = latest.title.replace('&quot;', '"').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-                  
-                  podcast_data = {
-                      'podcast_name': podcast_name,
-                      'title': clean_title,
-                      'url': apple_episode_link,
-                      'original_url': episode_link,
-                      'duration': duration,
-                      'topic': topic,
-                      'expressions': expressions,
-                      'episode_number': episode_number or 'Latest',
-                      'published': latest.get('published', ''),
-                      'region': "${{ steps.phase.outputs.podcast_region }}"
-                  }
-          except Exception as e:
-              print(f"팟캐스트 수집 오류: {e}")
-              podcast_data = {
-                  'podcast_name': podcast_name,
-                  'title': f"{podcast_name} - 최신 에피소드",
-                  'url': "${{ steps.phase.outputs.podcast_apple_base }}",
-                  'duration': "15-25분",
-                  'topic': "일반 주제",
-                  'expressions': [],
-                  'episode_number': 'Latest',
-                  'region': "${{ steps.phase.outputs.podcast_region }}"
-              }
-
-          # 결과 출력
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              if article_data:
-                  # 따옴표와 특수문자 이스케이프 처리
-                  article_title_clean = article_data['title'].replace('\n', ' ').replace('\r', ' ').replace('"', '\\"').replace("'", "\\'")
-                  article_memo_clean = create_detailed_memo('article', article_data, weekday_name)
-                  f.write(f"article_title={article_title_clean}\n")
-                  f.write(f"article_url={article_data['url']}\n")
-                  f.write(f"article_memo={article_memo_clean}\n")
-              
-              if podcast_data:
-                  # 따옴표와 특수문자 이스케이프 처리
-                  podcast_title_clean = podcast_data['title'].replace('\n', ' ').replace('\r', ' ').replace('"', '\\"').replace("'", "\\'")
-                  podcast_memo_clean = create_detailed_memo('podcast', podcast_data, weekday_name)
-                  f.write(f"podcast_title={podcast_title_clean}\n")
-                  f.write(f"podcast_url={podcast_data['url']}\n")
-                  f.write(f"podcast_memo={podcast_memo_clean}\n")
-                  f.write(f"episode_number={podcast_data['episode_number']}\n")
-          EOF
-
-      - name: Add materials to Notion with detailed information
-        run: |
-          python3 << 'EOF'
-          import os
-          import requests
-          import json
-          from datetime import datetime
-
-          notion_token = os.environ['NOTION_TOKEN']
-          database_id = os.environ['NOTION_DATABASE_ID']
-
-          headers = {
-              "Authorization": f"Bearer {notion_token}",
-              "Notion-Version": "2022-06-28", 
-              "Content-Type": "application/json"
-          }
-
-          today = "${{ steps.phase.outputs.date }}"
-
-          # 독해 자료 추가
-          article_title = "${{ steps.materials.outputs.article_title }}"
-          article_url = "${{ steps.materials.outputs.article_url }}"
-          article_memo = "${{ steps.materials.outputs.article_memo }}"
-
-          if article_title and article_url:
-              reading_payload = {
-                  "parent": {"database_id": database_id},
-                  "properties": {
-                      "내용": {"title": [{"text": {"content": f"[{today}] {article_title}"}}]},
-                      "URL": {"url": article_url},
-                      "날짜": {"date": {"start": today}},
-                      "지역": {"select": {"name": "스페인"}},
-                      "난이도": {"select": {"name": "${{ steps.phase.outputs.reading_difficulty }}"}},
-                      "자료 유형": {"select": {"name": "기사/뉴스"}},
-                      "학습 영역": {"select": {"name": "독해"}},
-                      "메모": {"rich_text": [{"text": {"content": article_memo}}]}
-                  }
-              }
-              
-              try:
-                  response = requests.post(
-                      "https://api.notion.com/v1/pages",
-                      headers=headers,
-                      json=reading_payload
-                  )
-                  if response.status_code == 200:
-                      print(f"✅ 독해 자료 추가 성공: {article_title}")
-                  else:
-                      print(f"❌ 독해 자료 추가 실패: {response.text}")
-              except Exception as e:
-                  print(f"독해 자료 전송 오류: {e}")
-
-          # 청해 자료 추가
-          podcast_title = "${{ steps.materials.outputs.podcast_title }}"
-          podcast_url = "${{ steps.materials.outputs.podcast_url }}"
-          podcast_memo = "${{ steps.materials.outputs.podcast_memo }}"
-          episode_number = "${{ steps.materials.outputs.episode_number }}"
-
-          display_title = f"${{ steps.phase.outputs.podcast_name }} Ep.{episode_number}"
-
-          podcast_payload = {
-              "parent": {"database_id": database_id},
-              "properties": {
-                  "내용": {"title": [{"text": {"content": f"[{today}] {display_title}"}}]},
-                  "URL": {"url": podcast_url},
-                  "날짜": {"date": {"start": today}},
-                  "지역": {"select": {"name": "${{ steps.phase.outputs.podcast_region }}"}},
-                  "난이도": {"select": {"name": "C1"}},
-                  "자료 유형": {"select": {"name": "팟캐스트"}},
-                  "학습 영역": {"select": {"name": "청해"}},
-                  "메모": {"rich_text": [{"text": {"content": podcast_memo}}]}
-              }
-          }
-
-          try:
-              response = requests.post(
-                  "https://api.notion.com/v1/pages",
-                  headers=headers,
-                  json=podcast_payload
-              )
-              if response.status_code == 200:
-                  print(f"✅ 청해 자료 추가 성공: {display_title}")
-              else:
-                  print(f"❌ 청해 자료 추가 실패: {response.text}")
-          except Exception as e:
-              print(f"청해 자료 전송 오류: {e}")
-          EOF
-
-      - name: Send detailed notification
-        if: success()
-        run: |
-          echo "🎉 ${{ steps.phase.outputs.date }} (${{ steps.phase.outputs.weekday_name }}) 스페인어 학습 자료 자동 수집 완료!"
-          echo ""
-          echo "📖 독해 자료:"
-          echo "   제목: ${{ steps.materials.outputs.article_title }}"
-          echo "   출처: ${{ steps.phase.outputs.reading_source }}"
-          echo "   난이도: ${{ steps.phase.outputs.reading_difficulty }}"
-          echo ""
-          echo "🎧 청해 자료:"
-          echo "   제목: ${{ steps.phase.outputs.podcast_name }} Ep.${{ steps.materials.outputs.episode_number }}"
-          echo "   지역: ${{ steps.phase.outputs.podcast_region }}"
-          echo "   링크: Apple Podcasts 앱에서 재생 가능"
-          echo ""
-          echo "📅 학습 주차: ${{ steps.phase.outputs.week_num }}주차"
-          echo "💡 팁: 팟캐스트는 Apple Podcasts 앱을 통해 접속하시면 원활하게 재생됩니다!"
