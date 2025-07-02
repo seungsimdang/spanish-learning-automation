@@ -22,6 +22,14 @@ def get_database_properties(database_id, headers):
             for prop_name, prop_info in properties.items():
                 prop_type = prop_info.get('type', 'unknown')
                 print(f"- {prop_name}: {prop_type}")
+                
+                # Select 타입의 경우 사용 가능한 옵션들도 출력
+                if prop_type == 'select':
+                    options = prop_info.get('select', {}).get('options', [])
+                    if options:
+                        option_names = [opt.get('name', '') for opt in options]
+                        print(f"  옵션들: {option_names}")
+                    
             print("=======================================")
             return properties
         else:
@@ -32,7 +40,7 @@ def get_database_properties(database_id, headers):
         print(f"데이터베이스 조회 오류: {e}")
         return {}
 
-def create_notion_page(title, url, content_type, memo, category="", vocabulary="", duration=""):
+def create_notion_page(title, url, content_type, memo, category="", vocabulary="", duration="", difficulty=""):
     """Notion 페이지 생성"""
     
     # Notion API 설정
@@ -52,65 +60,82 @@ def create_notion_page(title, url, content_type, memo, category="", vocabulary="
     # 데이터베이스 속성 정보 조회
     db_properties = get_database_properties(DATABASE_ID, headers)
     
-    # 실제 속성 이름 찾기 - 더 유연한 매핑
+    # 사용 가능한 옵션들 저장
+    select_options = {}
+    for prop_name, prop_info in db_properties.items():
+        if prop_info.get('type') == 'select':
+            options = prop_info.get('select', {}).get('options', [])
+            select_options[prop_name] = [opt.get('name', '') for opt in options]
+    
+    print(f"DEBUG: Select 옵션들: {select_options}")
+    
+    # 실제 속성 이름 찾기 - 명확한 매핑
     title_prop = None
     url_prop = None
-    type_prop = None
-    notes_prop = None
-    date_prop = None
-    category_prop = None
-    vocabulary_prop = None
-    duration_prop = None
+    type_prop = None        # 자료 유형
+    notes_prop = None       # 메모/학습 내용
+    date_prop = None        # 학습 예정일
+    difficulty_prop = None  # 난이도 (B1/B2/C1)
+    area_prop = None        # 학습 영역
+    region_prop = None      # 지역
+    vocabulary_prop = None  # 핵심 어휘
+    duration_prop = None    # 재생시간
     
+    # 속성 이름으로 정확히 매핑
     for prop_name, prop_info in db_properties.items():
         prop_type = prop_info.get('type', '')
-        prop_name_lower = prop_name.lower()
         
+        # 제목 속성
         if prop_type == 'title':
             title_prop = prop_name
+        
+        # URL 속성  
         elif prop_type == 'url':
             url_prop = prop_name
-        elif prop_type == 'select' and not type_prop:  # 첫 번째 select를 타입으로
-            type_prop = prop_name
-        elif prop_type == 'rich_text' and not notes_prop:  # 첫 번째 rich_text를 메모로
-            notes_prop = prop_name
+            
+        # 날짜 속성
         elif prop_type == 'date':
             date_prop = prop_name
-        elif prop_type == 'select' and type_prop and not category_prop:  # 두 번째 select를 카테고리로
-            category_prop = prop_name
-    
-    # rich_text 속성들을 순서대로 할당
-    rich_text_props = [name for name, info in db_properties.items() if info.get('type') == 'rich_text']
-    if len(rich_text_props) >= 1:
-        notes_prop = rich_text_props[0]
-    if len(rich_text_props) >= 2:
-        vocabulary_prop = rich_text_props[1]
-    if len(rich_text_props) >= 3:
-        duration_prop = rich_text_props[2]
+            
+        # Select 속성들 - 이름으로 구분
+        elif prop_type == 'select':
+            if '난이도' in prop_name:
+                difficulty_prop = prop_name
+            elif '자료' in prop_name or '유형' in prop_name:
+                type_prop = prop_name
+            elif '영역' in prop_name:
+                area_prop = prop_name
+            elif '지역' in prop_name or 'region' in prop_name.lower():
+                region_prop = prop_name
+                print(f"DEBUG: 지역 속성 발견: '{prop_name}'")
+                
+        # Rich text 속성들 - 이름으로 구분
+        elif prop_type == 'rich_text':
+            if '메모' in prop_name or '학습' in prop_name or '내용' in prop_name:
+                notes_prop = prop_name
+            elif '어휘' in prop_name:
+                vocabulary_prop = prop_name
+            elif '시간' in prop_name or '재생' in prop_name:
+                duration_prop = prop_name
     
     print(f"매핑된 속성들:")
     print(f"- 제목: {title_prop}")
     print(f"- URL: {url_prop}")
-    print(f"- 타입: {type_prop}")
+    print(f"- 자료 유형: {type_prop}")
+    print(f"- 난이도: {difficulty_prop}")
+    print(f"- 학습 영역: {area_prop}")
+    print(f"- 지역: {region_prop}")
     print(f"- 메모: {notes_prop}")
-    print(f"- 날짜: {date_prop}")
-    print(f"- 카테고리: {category_prop}")
     print(f"- 어휘: {vocabulary_prop}")
     print(f"- 재생시간: {duration_prop}")
+    print(f"- 날짜: {date_prop}")
     
-    # 필수 속성이 없으면 기본값 사용
-    if not title_prop:
-        print("경고: 제목 속성을 찾을 수 없어서 첫 번째 title 속성을 사용합니다.")
-        for prop_name, prop_info in db_properties.items():
-            if prop_info.get('type') == 'title':
-                title_prop = prop_name
-                break
-    
+    # 필수 속성이 없으면 오류
     if not title_prop:
         print("오류: 제목 속성을 찾을 수 없습니다.")
         return None
     
-    # 페이지 속성 설정 - 모든 속성을 기본값으로라도 채우기
+    # 페이지 속성 설정 - 올바른 값들로 설정
     properties = {}
     
     # 제목 속성 (필수)
@@ -125,19 +150,173 @@ def create_notion_page(title, url, content_type, memo, category="", vocabulary="
             ]
         }
     
-    # URL 속성 - 빈 값이라도 추가하지 않음 (Notion URL 타입은 유효한 URL만 허용)
+    # URL 속성 - 유효한 URL만 추가
     if url_prop and url and (url.startswith('http://') or url.startswith('https://')):
         properties[url_prop] = {
             "url": url
         }
     
-    # 타입 속성 - 항상 추가
+    # 자료 유형 속성 - 유효한 옵션만 사용
     if type_prop:
+        type_options = select_options.get(type_prop, [])
+        print(f"DEBUG: 자료 유형 옵션들: {type_options}")
+        
+        # content_type에 따라 적절한 값 설정
+        if content_type == "podcast":
+            # 팟캐스트 관련 옵션 찾기
+            if "팟캐스트" in type_options:
+                type_value = "팟캐스트"
+            elif "Podcast" in type_options:
+                type_value = "Podcast"  
+            elif "듣기" in type_options:
+                type_value = "듣기"
+            else:
+                type_value = type_options[0] if type_options else "기타"
+        elif content_type == "article":
+            # 기사 관련 옵션 찾기
+            if "기사" in type_options:
+                type_value = "기사"
+            elif "Article" in type_options:
+                type_value = "Article"
+            elif "읽기" in type_options:  
+                type_value = "읽기"
+            else:
+                type_value = type_options[0] if type_options else "기타"
+        else:
+            type_value = type_options[0] if type_options else "기타"
+            
+        print(f"DEBUG: 선택된 자료 유형: {type_value}")
         properties[type_prop] = {
             "select": {
-                "name": content_type or "일반"
+                "name": type_value
             }
         }
+    
+    # 난이도 속성 - 동적으로 분석된 난이도 사용
+    if difficulty_prop:
+        difficulty_options = select_options.get(difficulty_prop, [])
+        print(f"DEBUG: 난이도 옵션들: {difficulty_options}")
+        
+        # 전달받은 난이도를 우선 사용
+        preferred_difficulty = difficulty if difficulty else "B2"
+        
+        print(f"DEBUG: 전달받은 난이도: {preferred_difficulty}")
+        
+        # 유효한 옵션 중에서 선택
+        if preferred_difficulty in difficulty_options:
+            difficulty_value = preferred_difficulty
+        elif "B2+" in difficulty_options and preferred_difficulty == "B2+":
+            difficulty_value = "B2+"
+        elif "B1+" in difficulty_options and preferred_difficulty == "B1+":
+            difficulty_value = "B1+"
+        elif "B2" in difficulty_options:
+            difficulty_value = "B2"
+        elif "B1" in difficulty_options:
+            difficulty_value = "B1"
+        elif "C1" in difficulty_options:
+            difficulty_value = "C1"
+        else:
+            difficulty_value = difficulty_options[0] if difficulty_options else "B2"
+            
+        print(f"DEBUG: 선택된 난이도: {difficulty_value}")
+        properties[difficulty_prop] = {
+            "select": {
+                "name": difficulty_value
+            }
+        }
+    
+    # 학습 영역 속성 - 유효한 옵션만 사용
+    if area_prop:
+        area_options = select_options.get(area_prop, [])
+        print(f"DEBUG: 학습 영역 옵션들: {area_options}")
+        
+        if content_type == "podcast":
+            # 듣기 관련 옵션 찾기
+            if "청해" in area_options:
+                area_value = "청해"
+            elif "듣기" in area_options:
+                area_value = "듣기"
+            elif "Listening" in area_options:
+                area_value = "Listening"
+            else:
+                area_value = area_options[0] if area_options else "청해"
+        elif content_type == "article":
+            # 읽기 관련 옵션 찾기
+            if "읽기" in area_options:
+                area_value = "읽기"
+            elif "독해" in area_options:
+                area_value = "독해"
+            elif "Reading" in area_options:
+                area_value = "Reading"
+            else:
+                area_value = area_options[0] if area_options else "읽기"
+        else:
+            area_value = area_options[0] if area_options else "종합"
+            
+        print(f"DEBUG: 선택된 학습 영역: {area_value}")
+        properties[area_prop] = {
+            "select": {
+                "name": area_value
+            }
+        }
+    
+    # 지역 속성 - 유효한 옵션만 사용
+    if region_prop:
+        region_options = select_options.get(region_prop, [])
+        print(f"DEBUG: 지역 속성명: '{region_prop}'")
+        print(f"DEBUG: 지역 옵션들: {region_options}")
+        print(f"DEBUG: 제목: '{title}'")
+        print(f"DEBUG: 콘텐츠 타입: '{content_type}'")
+        
+        # 팟캐스트일 때는 제목으로 지역 판단
+        if content_type == "podcast":
+            if "Radio Ambulante" in title:
+                print("DEBUG: Radio Ambulante 팟캐스트 감지됨 - 중남미로 설정")
+                # Radio Ambulante는 중남미 팟캐스트
+                if "중남미" in region_options:
+                    region_value = "중남미"
+                    print("DEBUG: '중남미' 옵션 사용")
+                elif "라틴아메리카" in region_options:
+                    region_value = "라틴아메리카"
+                    print("DEBUG: '라틴아메리카' 옵션 사용")
+                elif "남미" in region_options:
+                    region_value = "남미"
+                    print("DEBUG: '남미' 옵션 사용")
+                elif "Latin America" in region_options:
+                    region_value = "Latin America"
+                    print("DEBUG: 'Latin America' 옵션 사용")
+                else:
+                    region_value = region_options[0] if region_options else "중남미"
+                    print(f"DEBUG: 기본값 사용: '{region_value}'")
+            else:
+                print("DEBUG: 일반 팟캐스트 - 스페인으로 설정")
+                # 다른 팟캐스트들은 스페인
+                if "스페인" in region_options:
+                    region_value = "스페인"
+                elif "Spain" in region_options:
+                    region_value = "Spain"
+                else:
+                    region_value = region_options[0] if region_options else "스페인"
+        else:
+            # 기사는 기본적으로 스페인
+            if "스페인" in region_options:
+                region_value = "스페인"
+            elif "Spain" in region_options:
+                region_value = "Spain"
+            elif "유럽" in region_options:
+                region_value = "유럽"
+            else:
+                region_value = region_options[0] if region_options else "스페인"
+            
+        print(f"DEBUG: 선택된 지역: '{region_value}'")
+        properties[region_prop] = {
+            "select": {
+                "name": region_value
+            }
+        }
+        print(f"DEBUG: 지역 속성 '{region_prop}'에 '{region_value}' 설정됨")
+    else:
+        print("WARNING: 지역 속성을 찾을 수 없습니다!")
     
     # 메모 속성 - 빈 값이라도 추가
     if notes_prop:
@@ -159,14 +338,6 @@ def create_notion_page(title, url, content_type, memo, category="", vocabulary="
             }
         }
     
-    # 카테고리 속성 - 기본값 설정
-    if category_prop:
-        properties[category_prop] = {
-            "select": {
-                "name": category or "일반"
-            }
-        }
-    
     # 어휘 속성 - 빈 값이라도 추가
     if vocabulary_prop:
         properties[vocabulary_prop] = {
@@ -179,8 +350,8 @@ def create_notion_page(title, url, content_type, memo, category="", vocabulary="
             ]
         }
     
-    # 재생시간 속성 - 빈 값이라도 추가
-    if duration_prop:
+    # 재생시간 속성 - 팟캐스트일 때만 추가
+    if duration_prop and content_type == "podcast":
         properties[duration_prop] = {
             "rich_text": [
                 {
@@ -233,6 +404,7 @@ def main():
         'ARTICLE_URL': os.environ.get('ARTICLE_URL', ''),
         'ARTICLE_CATEGORY': os.environ.get('ARTICLE_CATEGORY', ''),
         'ARTICLE_VOCABULARY': os.environ.get('ARTICLE_VOCABULARY', ''),
+        'ARTICLE_DIFFICULTY': os.environ.get('ARTICLE_DIFFICULTY', 'B2'),  # 추가
         'ARTICLE_MEMO': os.environ.get('ARTICLE_MEMO', ''),
         'PODCAST_TITLE': os.environ.get('PODCAST_TITLE', ''),
         'PODCAST_URL': os.environ.get('PODCAST_URL', ''),
@@ -254,10 +426,11 @@ def main():
         article_page_url = create_notion_page(
             title=article_title,
             url=env_vars['ARTICLE_URL'],
-            content_type="독해",
+            content_type="article",
             memo=env_vars['ARTICLE_MEMO'],
             category=env_vars['ARTICLE_CATEGORY'],
-            vocabulary=env_vars['ARTICLE_VOCABULARY']
+            vocabulary=env_vars['ARTICLE_VOCABULARY'],
+            difficulty=env_vars['ARTICLE_DIFFICULTY']  # env_vars에서 동적 난이도 가져오기
         )
         
         if article_page_url:
@@ -283,7 +456,7 @@ def main():
         podcast_page_url = create_notion_page(
             title=podcast_title,
             url=podcast_url,
-            content_type="청취",
+            content_type="podcast",
             memo=env_vars['PODCAST_MEMO'],
             category=env_vars['PODCAST_TOPIC'],
             duration=env_vars['PODCAST_DURATION']

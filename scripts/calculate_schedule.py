@@ -32,7 +32,7 @@ def main():
     podcast_schedule = {
         0: {
             "name": "Hoy Hablamos",
-            "rss": "https://feeds.feedburner.com/hoyhablamos",
+            "rss": "https://www.hoyhablamos.com/podcast.rss",  # 더 안정적인 RSS 피드 URL
             "apple_base": "https://podcasts.apple.com/kr/podcast/hoy-hablamos-podcast-diario-para-aprender-español-learn/id1201483158",
             "region": "스페인",
             "backup_url": "https://www.hoyhablamos.com/"
@@ -45,11 +45,28 @@ def main():
             "backup_url": "https://radioambulante.org/"
         },
         2: {
-            "name": "Advanced Spanish",
-            "rss": "https://feeds.buzzsprout.com/1829091.rss", 
-            "apple_base": "https://podcasts.apple.com/kr/podcast/advanced-spanish-podcast-español-avanzado/id1632291264",
+            "name": "SpanishWithVicente",
+            "rss": "https://feeds.feedburner.com/SpanishWithVicente",  # 더 안정적인 RSS 피드 URL
+            "apple_base": "https://podcasts.apple.com/kr/podcast/spanish-with-vicente/id1493547273",
             "region": "스페인",
-            "backup_url": "https://www.spanishlanguagecoach.com/podcast/"
+            "backup_url": "https://spanishwithvicente.com/",
+            "backup_feeds": [
+                {
+                    "name": "SpanishWithVicente (대체)",
+                    "rss": "https://anchor.fm/s/10e77b84/podcast/rss",
+                    "apple_base": "https://podcasts.apple.com/kr/podcast/spanish-with-vicente/id1493547273"
+                },
+                {
+                    "name": "Hoy Hablamos",
+                    "rss": "https://www.hoyhablamos.com/podcast.rss",
+                    "apple_base": "https://podcasts.apple.com/kr/podcast/hoy-hablamos-podcast-diario-para-aprender-español-learn/id1201483158"
+                },
+                {
+                    "name": "Radio Ambulante",
+                    "rss": "https://feeds.npr.org/510311/podcast.xml", 
+                    "apple_base": "https://podcasts.apple.com/kr/podcast/radio-ambulante/id527614348"
+                }
+            ]
         },
         3: {
             "name": "Radio Ambulante",

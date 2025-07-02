@@ -49,6 +49,7 @@ jobs:
           ARTICLE_URL: ${{ steps.materials.outputs.article_url }}
           ARTICLE_CATEGORY: ${{ steps.materials.outputs.article_category }}
           ARTICLE_VOCABULARY: ${{ steps.materials.outputs.article_vocabulary }}
+          ARTICLE_DIFFICULTY: ${{ steps.materials.outputs.article_difficulty }}
           ARTICLE_MEMO: ${{ steps.materials.outputs.article_memo }}
           PODCAST_TITLE: ${{ steps.materials.outputs.podcast_title }}
           PODCAST_URL: ${{ steps.materials.outputs.podcast_url }}
