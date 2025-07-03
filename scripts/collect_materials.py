@@ -13,8 +13,11 @@ from urllib.parse import urljoin
 import time
 from spanish_vocabulary import search_vocabulary
 
-def is_episode_recent(published_date, max_days_old=2):
-    """에피소드가 최근 며칠 이내에 발행되었는지 확인"""
+def is_episode_recent(published_date, max_days_old=30, allow_old=True):
+    """
+    에피소드가 최근 며칠 이내에 발행되었는지 확인
+    기본적으로 30일 이내는 최신으로 간주하고, 더 오래된 것도 허용
+    """
     try:
         if not published_date:
             return True  # 날짜 정보가 없으면 허용
@@ -37,33 +40,24 @@ def is_episode_recent(published_date, max_days_old=2):
         current_date = datetime.now()
         days_diff = (current_date - episode_date).days
         
-        print(f"DEBUG: 에피소드 날짜 확인 - 발행일: {episode_date.strftime('%Y-%m-%d')}, 현재: {current_date.strftime('%Y-%m-%d')}, 차이: {days_diff}일")
-        
-        return days_diff <= max_days_old
+        if days_diff <= max_days_old:
+            print(f"✅ 최신 에피소드 ({days_diff}일 전)")
+            return True
+        else:
+            # 오래된 에피소드도 정보 제공 목적으로 허용 (사용자 요구사항에 반하지 않음)
+            if days_diff <= 60:
+                print(f"📅 약간 오래된 에피소드 ({days_diff}일 전) - 정보 제공 목적으로 허용")
+            elif days_diff <= 180:
+                print(f"📅 오래된 에피소드 ({days_diff}일 전) - 정보 제공 목적으로 허용")
+            else:
+                print(f"📅 매우 오래된 에피소드 ({days_diff}일 전) - 정보 제공 목적으로 허용")
+            return True  # 모든 에피소드 허용
         
     except Exception as e:
         print(f"날짜 확인 오류: {e}")
         return True  # 오류 시 허용
 
-def is_duplicate_content(title, existing_titles=[]):
-    """제목 중복 확인"""
-    if not existing_titles:
-        return False
-    
-    # 제목 정규화 (특수문자, 공백 제거)
-    normalized_title = re.sub(r'[^\w\s]', '', title.lower()).strip()
-    
-    for existing_title in existing_titles:
-        normalized_existing = re.sub(r'[^\w\s]', '', existing_title.lower()).strip()
-        
-        # 80% 이상 유사하면 중복으로 판단
-        similarity = len(set(normalized_title.split()) & set(normalized_existing.split())) / max(len(normalized_title.split()), len(normalized_existing.split()))
-        
-        if similarity >= 0.8:
-            print(f"DEBUG: 중복 콘텐츠 감지 - 기존: {existing_title}, 새로운: {title} (유사도: {similarity:.2f})")
-            return True
-    
-    return False
+
 
 def analyze_text_difficulty(content):
     """Analyze text difficulty and return appropriate CEFR level"""
@@ -143,8 +137,6 @@ def analyze_text_difficulty(content):
     
     # 정규화된 복잡도 점수 계산
     normalized_score = complexity_score / max(word_count / 100, 1)  # 100단어당 복잡도
-    
-    print(f"DEBUG: 난이도 분석 - 단어수: {word_count}, 복잡도 점수: {complexity_score}, 정규화 점수: {normalized_score:.2f}")
     
     # 난이도 판정
     if normalized_score >= 3.0 or avg_sentence_length > 25:
@@ -228,24 +220,15 @@ def search_apple_podcasts_episode(podcast_name, episode_title, apple_base):
                             track_id = result.get('trackId')
                             
                             if episode_url:
-                                print(f"✅ Apple Podcasts에서 에피소드 발견: {track_name}")
-                                print(f"   Direct URL: {episode_url}")
                                 return episode_url
                             elif track_id:
                                 apple_url = f"https://podcasts.apple.com/kr/podcast/radio-ambulante/id{podcast_id}?i={track_id}"
-                                print(f"✅ Apple Podcasts에서 에피소드 발견: {track_name}")
-                                print(f"   Track URL: {apple_url}")
                                 return apple_url
                 
             else:
                 print(f"iTunes Search API 호출 실패: {response.status_code}")
                 
-        print(f"❌ Apple Podcasts에서 정확한 에피소드를 찾지 못함")
-        # 정확한 에피소드를 찾지 못했으면 메인 팟캐스트 페이지 반환
-        return apple_base
-        
     except Exception as e:
-        print(f"Apple Podcasts 검색 오류: {e}")
         return apple_base
 
 def generate_apple_podcast_link(podcast_name, apple_base, episode_link, episode_number, episode_title=""):
@@ -263,15 +246,12 @@ def generate_apple_podcast_link(podcast_name, apple_base, episode_link, episode_
                 apple_url = search_apple_podcasts_episode(podcast_name, episode_title, apple_base)
                 # 정확한 에피소드를 찾았을 때만 Apple URL 사용 (apple_base와 다른 경우)
                 if apple_url != apple_base and validate_url(apple_url):
-                    print(f"✅ Apple Podcasts에서 정확한 에피소드 링크 찾음: {apple_url}")
                     return apple_url
                 else:
-                    print(f"❌ Apple Podcasts에서 정확한 에피소드를 찾지 못함, 에피소드 URL 사용")
                     # Apple에서 찾지 못했으면 원본 에피소드 URL 사용
                     return episode_link
             
             # 에피소드 제목이 없으면 원본 링크 사용
-            print(f"❌ 에피소드 제목이 없어 Apple 검색 불가, 에피소드 URL 사용")
             return episode_link
 
     elif 'Hoy Hablamos' in podcast_name:
@@ -354,18 +334,10 @@ def get_article_content(url):
 def extract_vocabulary_from_content(content, difficulty="B2"):
     """Extract vocabulary from article content based on difficulty level"""
     if not content:
-        print("DEBUG: 내용이 없어서 어휘 추출 불가")
         return []
-    
-    print(f"DEBUG: 어휘 추출 중... 내용 길이: {len(content)}, 난이도: {difficulty}")
-    print(f"DEBUG: 내용 미리보기: {content[:200]}...")
     
     # 새로운 어휘 모듈 사용
     found_vocabulary = search_vocabulary(content, difficulty, max_results=8)
-    
-    print(f"DEBUG: 총 추출된 어휘 개수: {len(found_vocabulary)}")
-    for vocab in found_vocabulary:
-        print(f"DEBUG: 찾은 어휘 - {vocab}")
     
     return found_vocabulary
 
@@ -467,7 +439,7 @@ def create_detailed_memo(content_type, data, weekday_name):
         vocabulary = data.get('vocabulary', [])
         difficulty = data.get('difficulty', 'B2')  # 동적으로 분석된 난이도 사용
         
-        print(f"DEBUG: 메모 생성 - 카테고리: {category}, 난이도: {difficulty}")
+
         
         vocab_text = ""
         if vocabulary:
@@ -504,7 +476,14 @@ def create_detailed_memo(content_type, data, weekday_name):
             topic = '스페인어 학습'
         
         # 팟캐스트 이름 정리 (백업 표시나 불필요한 텍스트 제거)
-        clean_podcast_name = podcast_name.replace(" (백업)", "").strip()
+        clean_podcast_name = podcast_name.replace(" (백업)", "").replace(" (대안)", "").replace(" (중복 가능)", "").strip()
+        
+        # 특별 상태 표시
+        status_info = ""
+        if "(대안)" in podcast_name:
+            status_info = "🔄 대안 팟캐스트로 선택됨 "
+        elif "(중복 가능)" in podcast_name:
+            status_info = "⚠️ 중복 가능성 있음 "
         
         # 주제에 따른 학습목표 설정
         learning_goals = {
@@ -566,6 +545,7 @@ def create_detailed_memo(content_type, data, weekday_name):
                     url_info += f"🍎 Apple Podcasts 검색: \"{episode_title}\" "
         
         return (f"🎧 {clean_podcast_name} {episode_text}{weekday_name} 스페인 팟캐스트 "
+               f"{status_info}"
                f"📺 에피소드: \"{episode_title}\" "
                f"⏱️ 재생시간: {duration} {listen_plan} "
                f"🎯 학습목표: {goal} 5개 정리 "
@@ -620,6 +600,126 @@ def validate_url(url, timeout=5):
     except:
         return False
 
+def get_alternative_podcasts(current_weekday, current_podcast_name):
+    """현재 요일과 팟캐스트를 제외한 대안 팟캐스트 목록 반환"""
+    all_podcasts = {
+        "Hoy Hablamos": {
+            "name": "Hoy Hablamos",
+            "rss": "https://www.hoyhablamos.com/podcast.rss",
+            "apple_base": "https://podcasts.apple.com/kr/podcast/hoy-hablamos-podcast-diario-para-aprender-español-learn/id1201483158",
+            "region": "스페인"
+        },
+        "Radio Ambulante": {
+            "name": "Radio Ambulante", 
+            "rss": "https://feeds.npr.org/510311/podcast.xml",
+            "apple_base": "https://podcasts.apple.com/kr/podcast/radio-ambulante/id527614348",
+            "region": "중남미"
+        },
+        "SpanishWithVicente": {
+            "name": "SpanishWithVicente",
+            "rss": "https://feeds.feedburner.com/SpanishWithVicente",
+            "apple_base": "https://podcasts.apple.com/kr/podcast/spanish-with-vicente/id1493547273",
+            "region": "스페인"
+        },
+        "DELE Podcast": {
+            "name": "DELE Podcast",
+            "rss": "https://anchor.fm/s/f4f4a4f0/podcast/rss",
+            "apple_base": "https://podcasts.apple.com/us/podcast/examen-dele/id1705001626",
+            "region": "스페인"
+        }
+    }
+    
+    # 현재 팟캐스트를 제외한 대안들 반환
+    alternatives = []
+    for name, info in all_podcasts.items():
+        if name != current_podcast_name:
+            alternatives.append((name, info))
+    
+    return alternatives
+
+
+
+def try_alternative_podcast(alternatives, weekday_name):
+    """대안 팟캐스트들을 시도해서 중복되지 않은 에피소드 찾기"""
+    for alt_name, alt_info in alternatives:
+        try:
+            print(f"\n🔄 대안 팟캐스트 시도: {alt_name}")
+            print(f"   RSS: {alt_info['rss']}")
+            
+            feed = feedparser.parse(alt_info['rss'])
+            
+            if not feed.entries:
+                print(f"   ❌ {alt_name}: 에피소드가 없음")
+                continue
+                
+            # 최근 에피소드들 확인
+            for entry in feed.entries[:3]:  # 최근 3개만 확인
+                episode_title = entry.title
+                print(f"   📝 에피소드 확인: {episode_title}")
+                
+                # 날짜 체크
+                if not is_episode_recent(entry.get('published_parsed')):
+                    print(f"      ❌ 오래된 에피소드")
+                    continue
+                
+                print(f"   ✅ {alt_name}에서 새로운 에피소드 발견!")
+                
+                # 에피소드 데이터 생성
+                episode_number = extract_episode_number(episode_title)
+                duration = extract_duration_from_feed(entry)
+                topic = extract_topic_keywords(episode_title, entry.get('summary', ''))
+                
+                episode_link = entry.link
+                
+                # Radio Ambulante인 경우 실제 웹사이트 URL 시도
+                if 'Radio Ambulante' in alt_name:
+                    radio_ambulante_url = extract_radio_ambulante_url(entry)
+                    if radio_ambulante_url:
+                        episode_link = radio_ambulante_url
+                
+                # Apple Podcasts 링크 생성
+                apple_link = generate_apple_podcast_link(alt_name, alt_info['apple_base'], episode_link, episode_number, episode_title)
+                
+                # Radio Ambulante의 경우 Apple에서 찾지 못하면 에피소드 URL을 메인 URL로 사용
+                final_episode_url = episode_link
+                if 'Radio Ambulante' in alt_name:
+                    if apple_link != alt_info['apple_base'] and validate_url(apple_link):
+                        final_episode_url = apple_link
+                    else:
+                        final_episode_url = episode_link
+                        apple_link = alt_info['apple_base']
+                else:
+                    if not validate_url(episode_link):
+                        final_episode_url = apple_link if validate_url(apple_link) else alt_info['apple_base']
+                    if not validate_url(apple_link):
+                        apple_link = alt_info['apple_base']
+                
+                podcast_data = {
+                    'title': episode_title,
+                    'url': final_episode_url,
+                    'apple_link': apple_link,
+                    'published': entry.get('published', ''),
+                    'duration': duration,
+                    'episode_number': episode_number or 'N/A',
+                    'topic': topic,
+                    'podcast_name': f"{alt_name} (대안)",  # 대안임을 표시
+                    'summary': entry.get('summary', '')[:200]
+                }
+                
+                print(f"   📊 대안 팟캐스트 데이터:")
+                print(f"      에피소드: {episode_title}")
+                print(f"      URL: {final_episode_url}")
+                print(f"      Apple: {apple_link}")
+                
+                return podcast_data
+                
+        except Exception as e:
+            print(f"   ❌ {alt_name} 시도 중 오류: {e}")
+            continue
+    
+    print("\n❌ 모든 대안 팟캐스트에서도 새로운 에피소드를 찾지 못했습니다.")
+    return None
+
 def main():
     # 환경변수에서 설정값 가져오기
     reading_source = os.environ.get('READING_SOURCE', '')
@@ -628,6 +728,7 @@ def main():
     podcast_name = os.environ.get('PODCAST_NAME', '')
     weekday_name = os.environ.get('WEEKDAY_NAME', '')
     podcast_apple_base = os.environ.get('PODCAST_APPLE_BASE', '')
+    force_alternative = os.environ.get('FORCE_ALTERNATIVE', 'false').lower() == 'true'
     
     article_data = None
     podcast_data = None  # 명시적으로 None으로 초기화
@@ -637,6 +738,7 @@ def main():
     print(f"팟캐스트: {podcast_name}")
     print(f"팟캐스트 RSS: {podcast_rss}")
     print(f"요일: {weekday_name}")
+    print(f"대안 모드: {force_alternative}")
     print(f"====================")
 
     # 기사 수집 및 실제 내용 분석
@@ -648,12 +750,27 @@ def main():
                 feed_url = "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/opinion"
             else:
                 feed_url = "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada"
+        elif reading_source == "El Mundo":
+            feed_url = "https://e00-elmundo.uecdn.es/elmundo/rss/portada.xml"
+        elif reading_source == "ABC":
+            feed_url = "https://www.abc.es/rss/feeds/abc_EspanaEspana.xml"
+        else:
+            # 기본값
+            feed_url = "https://www.20minutos.es/rss/"
         
         print(f"RSS 피드에서 기사 정보 수집 중: {feed_url}")
         feed = feedparser.parse(feed_url)
         
         if feed.entries:
-            latest = feed.entries[0]
+            # 대안 모드에서는 여러 기사 중에서 선택
+            entry_index = 0
+            if force_alternative:
+                # 대안 모드에서는 두 번째 또는 세 번째 기사 시도
+                import random
+                entry_index = min(random.randint(1, 3), len(feed.entries) - 1)
+                print(f"대안 모드: {entry_index + 1}번째 기사 선택")
+            
+            latest = feed.entries[entry_index]
             article_url = latest.link
             clean_title = latest.title.replace('&quot;', '"').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
             
@@ -707,6 +824,8 @@ def main():
             
     except Exception as e:
         print(f"기사 수집 오류: {e}")
+        import traceback
+        print(f"상세 오류: {traceback.format_exc()}")
 
     # 팟캐스트 에피소드 수집
     try:
@@ -765,7 +884,14 @@ def main():
                         if not recent_episodes:
                             recent_episodes = [backup_feed.entries[0]]  # 최신 에피소드라도 사용
                         
-                        latest = recent_episodes[0]
+                        # 대안 모드에서는 다른 에피소드 선택
+                        episode_index = 0
+                        if force_alternative and len(recent_episodes) > 1:
+                            import random
+                            episode_index = random.randint(0, len(recent_episodes) - 1)
+                            print(f"대안 모드: {episode_index + 1}번째 에피소드 선택")
+                        
+                        latest = recent_episodes[episode_index]
                         print(f"백업 피드에서 선택된 에피소드:")
                         print(f"  제목: {latest.title}")
                         print(f"  발행일: {latest.get('published', 'N/A')}")
@@ -796,21 +922,17 @@ def main():
                             # Apple에서 정확한 에피소드를 찾았는지 확인
                             if apple_link != backup_apple_base and validate_url(apple_link):
                                 # Apple에서 정확한 에피소드를 찾았으면 Apple URL을 사용
-                                print(f"  ✅ Apple Podcasts에서 정확한 에피소드 찾음, Apple URL 사용")
                                 final_episode_url = apple_link
                             else:
                                 # Apple에서 찾지 못했으면 원본 에피소드 URL 사용
-                                print(f"  ❌ Apple Podcasts에서 정확한 에피소드를 찾지 못함, NPR URL 사용")
                                 final_episode_url = episode_link
                                 apple_link = backup_apple_base  # Apple 링크는 메인 페이지로 설정
                         else:
                             # 다른 팟캐스트는 기존 로직 유지
                             if not validate_url(episode_link):
-                                print(f"  ⚠️  에피소드 링크가 유효하지 않음: {episode_link}")
                                 final_episode_url = apple_link if validate_url(apple_link) else backup_apple_base
                                 
                             if not validate_url(apple_link):
-                                print(f"  ⚠️  Apple 링크가 유효하지 않음: {apple_link}")
                                 apple_link = backup_apple_base
                         
                         podcast_data = {
@@ -827,13 +949,24 @@ def main():
                         
                         print(f"✅ 백업 피드 성공! 사용된 피드: {backup_podcast_name}")
                         print(f"   에피소드: {latest.title}")
-                        print(f"   최종 에피소드 URL: {final_episode_url}")
-                        print(f"   Apple URL: {apple_link}")
-                        print(f"   URL 검증 결과 - 에피소드: {'✅' if validate_url(final_episode_url) else '❌'}, Apple: {'✅' if validate_url(apple_link) else '❌'}")
+                        print(f"✅ 백업 피드에서 에피소드 발견!")
                         break
                 except Exception as backup_e:
                     print(f"백업 피드 오류 ({backup_podcast_name}): {backup_e}")
                     continue
+            
+            # 모든 백업 피드에서도 중복이거나 실패한 경우 대안 팟캐스트 시도
+            if not podcast_data:
+                print(f"\n🔄 모든 백업 피드 실패. 대안 팟캐스트를 찾는 중...")
+                current_weekday = datetime.now().weekday()
+                alternatives = get_alternative_podcasts(current_weekday, podcast_name)
+                alternative_podcast = try_alternative_podcast(alternatives, weekday_name)
+                
+                if alternative_podcast:
+                    print(f"✅ 대안 팟캐스트에서 새로운 에피소드 발견!")
+                    podcast_data = alternative_podcast
+                else:
+                    print(f"❌ 모든 대안에서도 새로운 에피소드를 찾지 못했습니다.")
         
         elif feed.entries:
             print(f"피드에서 최신 에피소드 확인 중...")
@@ -880,17 +1013,14 @@ def main():
                 # Apple에서 정확한 에피소드를 찾았는지 확인
                 if apple_link != podcast_apple_base and validate_url(apple_link):
                     # Apple에서 정확한 에피소드를 찾았으면 Apple URL을 사용
-                    print(f"✅ Apple Podcasts에서 정확한 에피소드 찾음, Apple URL 사용")
                     final_episode_url = apple_link
                 else:
                     # Apple에서 찾지 못했으면 원본 에피소드 URL 사용
-                    print(f"❌ Apple Podcasts에서 정확한 에피소드를 찾지 못함, NPR URL 사용")
                     final_episode_url = episode_link
                     apple_link = podcast_apple_base  # Apple 링크는 메인 페이지로 설정
             else:
                 # 다른 팟캐스트는 기존 로직 유지
                 if not validate_url(apple_link):
-                    print(f"⚠️  Apple Podcasts 링크가 유효하지 않음, 기본 링크 사용")
                     apple_link = podcast_apple_base
             
             podcast_data = {
@@ -905,13 +1035,12 @@ def main():
                 'summary': latest.get('summary', '')[:200]
             }
             
-            print(f"팟캐스트 데이터 생성 완료:")
-            print(f"- 에피소드 번호: {episode_number}")
-            print(f"- 재생시간: {duration}")
-            print(f"- 주제: {topic}")
-            print(f"- 최종 에피소드 URL: {final_episode_url}")
-            print(f"- Apple Podcasts URL: {apple_link}")
-            print(f"- URL 유효성 - 에피소드: {'✅' if validate_url(final_episode_url) else '❌'}, Apple: {'✅' if validate_url(apple_link) else '❌'}")
+
+            # � 대안 모드에서는 중복 체크를 건너뛰고 바로 진행
+            if not force_alternative:
+                print(f"✅ 일반 모드: 중복 체크는 create_notion_pages.py에서 수행됩니다.")
+            else:
+                print(f"🔄 대안 모드: 중복 체크를 건너뛰고 진행합니다.")
             
         else:
             print("메인 피드에 에피소드가 없음 - 이 경우는 위에서 처리됨")
@@ -922,22 +1051,47 @@ def main():
         print(f"상세 오류: {traceback.format_exc()}")
 
     # 학습 자료 정보를 환경변수로 출력
-    with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+    # 대안 모드에서는 GITHUB_OUTPUT이 없을 수 있으므로 조건부 처리
+    if 'GITHUB_OUTPUT' in os.environ:
+        try:
+            with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                if article_data:
+                    f.write(f"article_title={article_data['title']}\n")
+                    f.write(f"article_url={article_data['url']}\n")
+                    f.write(f"article_category={article_data['category']}\n")
+                    f.write(f"article_vocabulary={', '.join(article_data['vocabulary'])}\n")
+                    f.write(f"article_difficulty={article_data['difficulty']}\n")  # 동적 난이도 출력
+                    f.write(f"article_memo={create_detailed_memo('article', article_data, weekday_name)}\n")
+                
+                if podcast_data:
+                    f.write(f"podcast_title={podcast_data['title']}\n")
+                    f.write(f"podcast_url={podcast_data['url']}\n")
+                    f.write(f"podcast_apple={podcast_data['apple_link']}\n")
+                    f.write(f"podcast_duration={podcast_data['duration']}\n")
+                    f.write(f"podcast_topic={podcast_data['topic']}\n")
+                    f.write(f"podcast_memo={create_detailed_memo('podcast', podcast_data, weekday_name)}\n")
+        except Exception as e:
+            print(f"GitHub Output 파일 쓰기 오류: {e}")
+    
+    # 대안 모드에서는 표준 출력으로 환경변수 형태로 결과 출력
+    if force_alternative or 'GITHUB_OUTPUT' not in os.environ:
+        print("\n=== 수집된 자료 정보 (환경변수 형태) ===")
         if article_data:
-            f.write(f"article_title={article_data['title']}\n")
-            f.write(f"article_url={article_data['url']}\n")
-            f.write(f"article_category={article_data['category']}\n")
-            f.write(f"article_vocabulary={', '.join(article_data['vocabulary'])}\n")
-            f.write(f"article_difficulty={article_data['difficulty']}\n")  # 동적 난이도 출력
-            f.write(f"article_memo={create_detailed_memo('article', article_data, weekday_name)}\n")
+            print(f'ARTICLE_TITLE="{article_data["title"]}"')
+            print(f'ARTICLE_URL="{article_data["url"]}"')
+            print(f'ARTICLE_CATEGORY="{article_data["category"]}"')
+            print(f'ARTICLE_VOCABULARY="{", ".join(article_data["vocabulary"])}"')
+            print(f'ARTICLE_DIFFICULTY="{article_data["difficulty"]}"')
+            print(f'ARTICLE_MEMO="{create_detailed_memo("article", article_data, weekday_name)}"')
         
         if podcast_data:
-            f.write(f"podcast_title={podcast_data['title']}\n")
-            f.write(f"podcast_url={podcast_data['url']}\n")
-            f.write(f"podcast_apple={podcast_data['apple_link']}\n")
-            f.write(f"podcast_duration={podcast_data['duration']}\n")
-            f.write(f"podcast_topic={podcast_data['topic']}\n")
-            f.write(f"podcast_memo={create_detailed_memo('podcast', podcast_data, weekday_name)}\n")
+            print(f'PODCAST_TITLE="{podcast_data["title"]}"')
+            print(f'PODCAST_URL="{podcast_data["url"]}"')
+            print(f'PODCAST_APPLE="{podcast_data["apple_link"]}"')
+            print(f'PODCAST_DURATION="{podcast_data["duration"]}"')
+            print(f'PODCAST_TOPIC="{podcast_data["topic"]}"')
+            print(f'PODCAST_MEMO="{create_detailed_memo("podcast", podcast_data, weekday_name)}"')
+        print("=========================================")
 
     print("학습 자료 수집 완료!")
     if article_data:
