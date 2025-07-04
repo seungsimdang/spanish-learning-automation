@@ -42,7 +42,7 @@ def get_database_properties(database_id, headers):
         print(f"데이터베이스 조회 오류: {e}")
         return {}
 
-def create_notion_page(title, url, content_type, memo, category="", vocabulary="", duration="", difficulty="", is_alternative=False):
+def create_notion_page(title, url, content_type, memo, category="", duration="", difficulty="", is_alternative=False):
     """Notion 페이지 생성 - 중복 시 자동으로 대체 자료 검색"""
     
     # 중복 페이지 확인 (대안 검색 모드가 아닐 때만)
@@ -101,7 +101,6 @@ def create_notion_page(title, url, content_type, memo, category="", vocabulary="
     difficulty_prop = None  # 난이도 (B1/B2/C1)
     area_prop = None        # 학습 영역
     region_prop = None      # 지역
-    vocabulary_prop = None  # 핵심 어휘
     duration_prop = None    # 재생시간
     
     # 속성 이름으로 정확히 매핑
@@ -135,8 +134,6 @@ def create_notion_page(title, url, content_type, memo, category="", vocabulary="
         elif prop_type == 'rich_text':
             if '메모' in prop_name or '학습' in prop_name or '내용' in prop_name:
                 notes_prop = prop_name
-            elif '어휘' in prop_name:
-                vocabulary_prop = prop_name
             elif '시간' in prop_name or '재생' in prop_name:
                 duration_prop = prop_name
     
@@ -148,7 +145,6 @@ def create_notion_page(title, url, content_type, memo, category="", vocabulary="
     print(f"- 학습 영역: {area_prop}")
     print(f"- 지역: {region_prop}")
     print(f"- 메모: {notes_prop}")
-    print(f"- 어휘: {vocabulary_prop}")
     print(f"- 재생시간: {duration_prop}")
     print(f"- 날짜: {date_prop}")
     
@@ -335,18 +331,6 @@ def create_notion_page(title, url, content_type, memo, category="", vocabulary="
             "date": {
                 "start": datetime.now().strftime('%Y-%m-%d')
             }
-        }
-    
-    # 어휘 속성 - 빈 값이라도 추가
-    if vocabulary_prop:
-        properties[vocabulary_prop] = {
-            "rich_text": [
-                {
-                    "text": {
-                        "content": vocabulary or "어휘 없음"
-                    }
-                }
-            ]
         }
     
     # 재생시간 속성 - 팟캐스트일 때만 추가
@@ -591,7 +575,6 @@ def find_and_register_alternative_article():
                                 content_type="article",
                                 memo=os.environ.get('ARTICLE_MEMO', ''),
                                 category=os.environ.get('ARTICLE_CATEGORY', ''),
-                                vocabulary=os.environ.get('ARTICLE_VOCABULARY', ''),
                                 difficulty=os.environ.get('ARTICLE_DIFFICULTY', 'B2'),
                                 is_alternative=True  # 대안 모드로 호출
                             )
@@ -714,7 +697,6 @@ def main():
         'ARTICLE_TITLE': os.environ.get('ARTICLE_TITLE', ''),
         'ARTICLE_URL': os.environ.get('ARTICLE_URL', ''),
         'ARTICLE_CATEGORY': os.environ.get('ARTICLE_CATEGORY', ''),
-        'ARTICLE_VOCABULARY': os.environ.get('ARTICLE_VOCABULARY', ''),
         'ARTICLE_DIFFICULTY': os.environ.get('ARTICLE_DIFFICULTY', 'B2'),  # 추가
         'ARTICLE_MEMO': os.environ.get('ARTICLE_MEMO', ''),
         'PODCAST_TITLE': os.environ.get('PODCAST_TITLE', ''),
@@ -740,7 +722,6 @@ def main():
             content_type="article",
             memo=env_vars['ARTICLE_MEMO'],
             category=env_vars['ARTICLE_CATEGORY'],
-            vocabulary=env_vars['ARTICLE_VOCABULARY'],
             difficulty=env_vars['ARTICLE_DIFFICULTY'],  # env_vars에서 동적 난이도 가져오기
             is_alternative=False  # 일반 모드
         )

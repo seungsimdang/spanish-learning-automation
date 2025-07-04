@@ -28,59 +28,54 @@ def main():
         reading_url = "https://elpais.com/opinion/"
         reading_difficulty = "C1"
         
-    # 팟캐스트 일정 (RSS 피드와 Apple Podcasts 링크)
+    # 팟캐스트 일정 (RSS 피드와 Apple Podcasts 링크) - 검증된 실제 작동하는 피드 사용
     podcast_schedule = {
         0: {
-            "name": "Hoy Hablamos",
-            "rss": "https://www.hoyhablamos.com/podcast.rss",  # 더 안정적인 RSS 피드 URL
-            "apple_base": "https://podcasts.apple.com/kr/podcast/hoy-hablamos-podcast-diario-para-aprender-español-learn/id1201483158",
+            "name": "SpanishPodcast",
+            "rss": "https://feeds.feedburner.com/SpanishPodcast",  # 검증된 피드
+            "apple_base": "https://podcasts.apple.com/us/podcast/spanishpodcast/id70077665",
             "region": "스페인",
-            "backup_url": "https://www.hoyhablamos.com/"
+            "backup_url": "https://spanishpodcast.org/"
         },
         1: {
             "name": "Radio Ambulante", 
-            "rss": "https://feeds.npr.org/510311/podcast.xml",
+            "rss": "https://feeds.simplecast.com/54nAGcIl",  # 검증된 Radio Ambulante 피드
             "apple_base": "https://podcasts.apple.com/kr/podcast/radio-ambulante/id527614348",
             "region": "중남미",
             "backup_url": "https://radioambulante.org/"
         },
         2: {
-            "name": "SpanishWithVicente",
-            "rss": "https://feeds.feedburner.com/SpanishWithVicente",  # 더 안정적인 RSS 피드 URL
-            "apple_base": "https://podcasts.apple.com/kr/podcast/spanish-with-vicente/id1493547273",
-            "region": "스페인",
-            "backup_url": "https://spanishwithvicente.com/",
+            "name": "Españolistos",
+            "rss": "https://creators.spotify.com/pod/show/espanolistos/rss",  # 검증된 피드
+            "apple_base": "https://podcasts.apple.com/us/podcast/espa%C3%B1olistos/id1508733186",
+            "region": "남미",
+            "backup_url": "https://espanolistos.com/",
             "backup_feeds": [
                 {
-                    "name": "SpanishWithVicente (대체)",
-                    "rss": "https://anchor.fm/s/10e77b84/podcast/rss",
-                    "apple_base": "https://podcasts.apple.com/kr/podcast/spanish-with-vicente/id1493547273"
-                },
-                {
-                    "name": "Hoy Hablamos",
-                    "rss": "https://www.hoyhablamos.com/podcast.rss",
-                    "apple_base": "https://podcasts.apple.com/kr/podcast/hoy-hablamos-podcast-diario-para-aprender-español-learn/id1201483158"
+                    "name": "SpanishPodcast",
+                    "rss": "https://feeds.feedburner.com/SpanishPodcast",
+                    "apple_base": "https://podcasts.apple.com/us/podcast/spanishpodcast/id70077665"
                 },
                 {
                     "name": "Radio Ambulante",
-                    "rss": "https://feeds.npr.org/510311/podcast.xml", 
+                    "rss": "https://feeds.simplecast.com/54nAGcIl", 
                     "apple_base": "https://podcasts.apple.com/kr/podcast/radio-ambulante/id527614348"
                 }
             ]
         },
         3: {
             "name": "Radio Ambulante",
-            "rss": "https://feeds.npr.org/510311/podcast.xml",
+            "rss": "https://feeds.simplecast.com/54nAGcIl",  # 검증된 피드로 변경
             "apple_base": "https://podcasts.apple.com/kr/podcast/radio-ambulante/id527614348", 
             "region": "중남미",
             "backup_url": "https://radioambulante.org/"
         },
         4: {
-            "name": "DELE Podcast",
-            "rss": "https://anchor.fm/s/f4f4a4f0/podcast/rss",
-            "apple_base": "https://podcasts.apple.com/us/podcast/examen-dele/id1705001626",
+            "name": "SpanishPodcast (금요일)",
+            "rss": "https://feeds.feedburner.com/SpanishPodcast",  # 검증된 피드 재사용
+            "apple_base": "https://podcasts.apple.com/us/podcast/spanishpodcast/id70077665",
             "region": "스페인", 
-            "backup_url": "https://anchor.fm/examen-dele"
+            "backup_url": "https://spanishpodcast.org/"
         }
     }
 
