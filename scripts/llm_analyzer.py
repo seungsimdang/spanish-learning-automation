@@ -8,6 +8,8 @@ import os
 import json
 import requests
 import time
+import unicodedata
+import html
 from typing import List, Dict, Optional
 
 class SpanishLLMAnalyzer:
@@ -68,9 +70,19 @@ class SpanishLLMAnalyzer:
         if not transcript:
             return []
         
+        # 텍스트 정리 및 인코딩 문제 해결
+        transcript = self.clean_text(transcript)
+        
+        # 정리된 텍스트가 비어있거나 너무 짧으면 건너뛰기
+        if len(transcript.strip()) < 50:
+            print(f"    ⚠️  정리된 텍스트가 너무 짧습니다: {len(transcript.strip())}자")
+            return []
+        
         # 텍스트가 너무 길면 처음 2000자만 사용
         if len(transcript) > 2000:
             transcript = transcript[:2000] + "..."
+        
+        print(f"    📝 정리된 텍스트 미리보기: {transcript[:100]}...")
         
         prompt = f"""
 You are analyzing Spanish text to find ACTUAL colloquial expressions that appear in the text.
@@ -88,8 +100,8 @@ Instructions:
 
 Examples of what to look for (ONLY if they actually appear in the text):
 - Conversational fillers: o sea, bueno, pues, entonces
-- Question tags: ¿verdad?, ¿no?, ¿sabes?
-- Informal transitions: por cierto, a propósito, además
+- Question tags: verdad, no, sabes
+- Informal transitions: por cierto, a proposito, ademas
 - Opinion expressions: me parece que, creo que, la cosa es que
 
 Response format (only if expressions are found in the text):
@@ -136,104 +148,109 @@ If no colloquial expressions are found in this formal text, respond with: NO_COL
         
         return expressions[:5]  # 최대 5개 반환
     
-    def analyze_article_grammar(self, article_content: str, difficulty: str = "B2") -> List[str]:
+    def analyze_article_grammar(self, article_content: str, difficulty: str = "B2") -> Dict[str, any]:
         """
         Analyze grammar structures in article content using LLM
         기사 내용의 문법 구조 분석
         """
         if not article_content:
-            return []
+            return {"original_sentence": "", "grammar_analysis": []}
         
         # 텍스트가 너무 길면 처음 1500자만 사용
         if len(article_content) > 1500:
             article_content = article_content[:1500] + "..."
         
         prompt = f"""
-Analyze this Spanish article and identify 3-4 specific grammar structures suitable for {difficulty} level learners.
+Analyze this Spanish article and identify 1 representative sentence for grammar analysis at {difficulty} level.
 
-For each grammar point, provide:
-1. The exact sentence from the text where it appears
-2. The specific grammar structure used in Korean
-3. The CEFR level of that structure
-4. A brief explanation in Korean
+Select the most complex and educational sentence from the text that contains multiple grammar structures suitable for {difficulty} level learners.
 
 Article content:
 {article_content}
 
-Please provide exactly 3-4 grammar points in this format:
-- 문장: "exact sentence from text"
-- 문법: Korean grammar term
-- 레벨: CEFR level (A1, A2, B1, B2, C1, C2)
-- 설명: Brief Korean explanation
+Please provide the analysis in this exact format:
 
-Example format:
-- 문장: "Si hubiera tenido más tiempo, habría terminado el proyecto."
-- 문법: 접속법 과거완료
-- 레벨: C1
-- 설명: 과거의 비현실적 상황과 그 결과를 표현하는 구조
+ORIGINAL_SENTENCE: [exact sentence from text]
+
+GRAMMAR_ANALYSIS:
+**문법 구조 1 (수준)**
+- 설명 1
+- 설명 2
+
+**문법 구조 2 (수준)**  
+- 설명 1
+- 설명 2
+
+**문법 구조 3 (수준)**
+- 설명 1
+- 설명 2
+
+**문법 구조 4 (수준)**
+- 설명 1 
+- 설명 2
+
+**문법 구조 5 (수준)**
+- 설명 1
+- 설명 2
 
 Focus on grammar structures appropriate for {difficulty} level such as:
 - B1: 현재/과거 시제, ser vs estar, 재귀동사
-- B2: 접속법 현재/과거, 조건법, 완료 시제
+- B2: 접속법 현재/과거, 조건법, 완료 시제  
 - C1: 접속법 완료, 복합 조건문, 수동태
 
-Return only the grammar points in the exact format above, no additional text.
+Provide detailed explanations for each grammar point including specific words from the sentence.
 """
         
-        response = self._make_api_call(prompt, max_tokens=600)
+        response = self._make_api_call(prompt, max_tokens=800)
         
         if not response:
-            return []
+            return {"original_sentence": "", "grammar_analysis": []}
         
-        # 응답에서 문법 포인트들 추출하고 새로운 형식으로 변환
-        grammar_points = []
+        # 응답에서 원문 문장과 문법 분석 추출
+        original_sentence = ""
+        grammar_analysis = []
+        
         lines = response.split('\n')
+        current_section = ""
+        current_grammar = ""
+        current_points = []
         
-        current_point = {}
         for line in lines:
             line = line.strip()
-            if line.startswith('- 문장:'):
-                if current_point:  # 이전 포인트 저장
-                    if all(key in current_point for key in ['문장', '문법', '레벨']):
-                        # 새로운 형식으로 변환: "이 문장에는 접속법 과거가 쓰이고 있다 (B2): '문장' - 설명"
-                        sentence = current_point['문장']
-                        grammar = current_point['문법']
-                        level = current_point['레벨']
-                        explanation = current_point.get('설명', '')
-                        
-                        if len(sentence) > 80:
-                            sentence = sentence[:80] + "..."
-                        
-                        point_text = f"이 문장에는 {grammar}가 쓰이고 있다 ({level}): '{sentence}'"
-                        if explanation:
-                            point_text += f" - {explanation}"
-                        
-                        grammar_points.append(point_text)
-                current_point = {'문장': line[6:].strip().strip('"')}
-            elif line.startswith('- 문법:'):
-                current_point['문법'] = line[6:].strip()
-            elif line.startswith('- 레벨:'):
-                current_point['레벨'] = line[6:].strip()
-            elif line.startswith('- 설명:'):
-                current_point['설명'] = line[6:].strip()
+            
+            if line.startswith('ORIGINAL_SENTENCE:'):
+                original_sentence = line.replace('ORIGINAL_SENTENCE:', '').strip()
+            elif line.startswith('GRAMMAR_ANALYSIS:'):
+                current_section = "grammar"
+            elif line.startswith('**') and line.endswith('**'):
+                # 이전 문법 구조 저장
+                if current_grammar and current_points:
+                    grammar_analysis.append({
+                        "title": current_grammar,
+                        "points": current_points
+                    })
+                # 새로운 문법 구조 시작
+                current_grammar = line.replace('**', '').strip()
+                current_points = []
+            elif line.startswith('- ') and current_section == "grammar":
+                current_points.append(line[2:].strip())
         
-        # 마지막 포인트 저장
-        if current_point and all(key in current_point for key in ['문장', '문법', '레벨']):
-            sentence = current_point['문장']
-            grammar = current_point['문법']
-            level = current_point['레벨']
-            explanation = current_point.get('설명', '')
-            
-            if len(sentence) > 80:
-                sentence = sentence[:80] + "..."
-            
-            point_text = f"이 문장에는 {grammar}가 쓰이고 있다 ({level}): '{sentence}'"
-            if explanation:
-                point_text += f" - {explanation}"
-            
-            grammar_points.append(point_text)
+        # 마지막 문법 구조 저장
+        if current_grammar and current_points:
+            grammar_analysis.append({
+                "title": current_grammar,
+                "points": current_points
+            })
         
-        return grammar_points[:4]  # 최대 4개 반환
+        return {
+            "original_sentence": original_sentence,
+            "grammar_analysis": grammar_analysis
+        }
+        
+        return {
+            "original_sentence": original_sentence,
+            "grammar_analysis": grammar_analysis
+        }
     
     def analyze_text_difficulty(self, content: str) -> str:
         """
@@ -274,3 +291,150 @@ Respond with only the CEFR level (e.g., "B2" or "B2+" or "C1"), no additional te
                     return level
         
         return "B2"  # 기본값
+    
+    def clean_text(self, text: str) -> str:
+        """
+        Clean and normalize text for better LLM analysis
+        텍스트 정리 및 정규화
+        """
+        if not text:
+            return ""
+        
+        # HTML 엔티티 디코딩
+        text = html.unescape(text)
+        
+        # 잘못된 인코딩 수정
+        replacements = {
+            'Ã±': 'ñ',  # EspaÃ±ol -> Español
+            'Ã¡': 'á',
+            'Ã©': 'é',
+            'Ã­': 'í',
+            'Ã³': 'ó',
+            'Ãº': 'ú',
+            'Ã ': 'à',
+            'Ã¨': 'è',
+            'Ã¬': 'ì',
+            'Ã²': 'ò',
+            'Ã¹': 'ù',
+            'Ã¼': 'ü',
+            'Ã': 'Ñ',
+            'Â': '',  # 불필요한 문자 제거
+            '\xa0': ' ',  # non-breaking space
+            '\u2028': '\n',  # line separator
+            '\u2029': '\n\n'  # paragraph separator
+        }
+        
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+        
+        # 유니코드 정규화
+        text = unicodedata.normalize('NFC', text)
+        
+        # 여러 공백을 하나로 정리
+        text = ' '.join(text.split())
+        
+        return text
+    
+    def generate_podcast_learning_goals(self, content: str, title: str, difficulty: str = "B2", colloquial_count: int = 0) -> List[str]:
+        """
+        팟캐스트 내용을 분석하여 적절한 학습 목표를 생성
+        
+        Args:
+            content: 팟캐스트 내용 (메모/스크립트)
+            title: 팟캐스트 제목
+            difficulty: 학습자 수준 (B1, B2, C1 등)
+            colloquial_count: 분석된 구어체 표현 개수
+            
+        Returns:
+            List of learning goals
+        """
+        print(f"    🎯 팟캐스트 학습 목표 생성 중... (난이도: {difficulty}, 구어체 표현: {colloquial_count}개)")
+        
+        # 내용 정리
+        clean_content = self.clean_text(content)
+        
+        # 구어체 표현 개수에 따른 목표 조정
+        colloquial_goal = f"구어체 표현 {colloquial_count}개" if colloquial_count > 0 else "구어체 표현"
+        
+        prompt = f"""
+Analyze this Spanish podcast episode and generate 3-4 specific, actionable learning goals for a {difficulty} level Spanish learner.
+
+PODCAST TITLE: {title}
+PODCAST CONTENT: {clean_content[:1500]}
+COLLOQUIAL EXPRESSIONS FOUND: {colloquial_count} expressions
+
+Consider the following aspects when creating learning goals:
+1. Main topic/theme of the episode
+2. Vocabulary focus areas (suggest realistic number based on content length)
+3. Grammar structures present
+4. Cultural/contextual learning opportunities
+5. Listening comprehension skills
+6. Colloquial expressions: exactly {colloquial_count} expressions were found in the analysis
+
+Create learning goals that are:
+- Specific and measurable
+- Appropriate for {difficulty} level
+- Reflect the ACTUAL analysis results (e.g., if {colloquial_count} colloquial expressions were found, mention that exact number)
+- Focus on practical language skills
+- Encourage active listening and engagement
+- Be realistic about vocabulary numbers (5-10 key words, not excessive amounts)
+
+Format your response as a numbered list in Korean:
+1. [구체적인 학습 목표 1]
+2. [구체적인 학습 목표 2]  
+3. [구체적인 학습 목표 3]
+(4. [추가 목표 if relevant])
+
+Make sure to reference the actual number of colloquial expressions found: {colloquial_count}
+
+Examples of good learning goals:
+- 에피소드 주제와 관련된 핵심 어휘 5-8개 학습 및 활용
+- 화자의 감정 표현 방식과 억양 패턴 파악  
+- 분석된 구어체 표현 {colloquial_count}개를 정리하고 일상 대화에서 활용하기
+- 스페인어 문화적 맥락에서 사용되는 관용 표현 이해
+"""
+        
+        response = self._make_api_call(prompt, max_tokens=600)
+        
+        if not response:
+            # 기본 목표 반환 (구어체 표현 개수 반영)
+            if colloquial_count > 0:
+                return [
+                    f"팟캐스트 주제 관련 핵심 어휘 5-7개 학습 ({difficulty} 수준)",
+                    f"분석된 구어체 표현 {colloquial_count}개 정리 및 활용",
+                    "자연스러운 발음과 억양 패턴 학습"
+                ]
+            else:
+                return [
+                    f"팟캐스트 주제 관련 어휘 학습 ({difficulty} 수준)",
+                    "스페인어 구어체 표현 파악 및 이해",
+                    "자연스러운 발음과 억양 패턴 학습"
+                ]
+        
+        # 응답에서 목표들 추출
+        goals = []
+        lines = response.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            # 숫자로 시작하는 줄 찾기 (1. 2. 3. 형태)
+            if line and (line[0].isdigit() or line.startswith('•') or line.startswith('-')):
+                # 번호 부분 제거
+                if '. ' in line:
+                    goal = line.split('. ', 1)[1].strip()
+                elif line.startswith('• '):
+                    goal = line[2:].strip()
+                elif line.startswith('- '):
+                    goal = line[2:].strip()
+                else:
+                    goal = line.strip()
+                
+                if goal and len(goal) > 10:  # 너무 짧은 목표는 제외
+                    goals.append(goal)
+        
+        # 3-4개 목표 반환
+        return goals[:4] if goals else [
+            f"팟캐스트 주제 관련 어휘 학습 ({difficulty} 수준)",
+            "스페인어 구어체 표현 파악 및 이해",
+            "자연스러운 발음과 억양 패턴 학습"
+        ]

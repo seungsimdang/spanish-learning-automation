@@ -96,7 +96,6 @@ def create_notion_page(title, url, content_type, memo, category="", duration="",
     title_prop = None
     url_prop = None
     type_prop = None        # 자료 유형
-    notes_prop = None       # 메모/학습 내용
     date_prop = None        # 학습 예정일
     difficulty_prop = None  # 난이도 (B1/B2/C1)
     area_prop = None        # 학습 영역
@@ -132,9 +131,7 @@ def create_notion_page(title, url, content_type, memo, category="", duration="",
                 
         # Rich text 속성들 - 이름으로 구분
         elif prop_type == 'rich_text':
-            if '메모' in prop_name or '학습' in prop_name or '내용' in prop_name:
-                notes_prop = prop_name
-            elif '시간' in prop_name or '재생' in prop_name:
+            if '시간' in prop_name or '재생' in prop_name:
                 duration_prop = prop_name
     
     print(f"매핑된 속성들:")
@@ -144,7 +141,6 @@ def create_notion_page(title, url, content_type, memo, category="", duration="",
     print(f"- 난이도: {difficulty_prop}")
     print(f"- 학습 영역: {area_prop}")
     print(f"- 지역: {region_prop}")
-    print(f"- 메모: {notes_prop}")
     print(f"- 재생시간: {duration_prop}")
     print(f"- 날짜: {date_prop}")
     
@@ -313,17 +309,6 @@ def create_notion_page(title, url, content_type, memo, category="", duration="",
             }
         }
     
-    # 메모 속성 - 빈 값이라도 추가
-    if notes_prop:
-        properties[notes_prop] = {
-            "rich_text": [
-                {
-                    "text": {
-                        "content": memo or "메모 없음"
-                    }
-                }
-            ]
-        }
     
     # 날짜 속성 - 항상 오늘 날짜
     if date_prop:
@@ -345,9 +330,13 @@ def create_notion_page(title, url, content_type, memo, category="", duration="",
             ]
         }
 
+    # 페이지 내용 블록 생성 - 메모를 보기 좋게 정리
+    children = create_page_content(content_type, memo, title, url, duration, category, difficulty)
+
     data = {
         "parent": {"database_id": DATABASE_ID},
-        "properties": properties
+        "properties": properties,
+        "children": children
     }
 
     try:
@@ -664,6 +653,7 @@ def find_and_register_alternative_podcast():
                                 content_type="podcast",
                                 memo=os.environ.get('PODCAST_MEMO', ''),
                                 category=os.environ.get('PODCAST_TOPIC', ''),
+                                difficulty=os.environ.get('PODCAST_DIFFICULTY', 'B2'),  # 팟캐스트 난이도 추가
                                 duration=os.environ.get('PODCAST_DURATION', ''),
                                 is_alternative=True  # 대안 모드로 호출
                             )
@@ -679,6 +669,1007 @@ def find_and_register_alternative_podcast():
             print(f"❌ {podcast['name']} 오류: {e}")
     
     return False
+
+def create_page_content(content_type, memo, title, url, duration="", category="", difficulty=""):
+    """페이지 내용 블록을 생성 - 체계적인 학습 템플릿 with AI 분석"""
+    children = []
+    
+    if not memo:
+        return children
+    
+    # LLM 분석 수행
+    grammar_analysis = {}
+    colloquial_expressions = []
+    learning_goals = []
+    
+    try:
+        from llm_analyzer import SpanishLLMAnalyzer
+        analyzer = SpanishLLMAnalyzer()
+        
+        if content_type == "article":
+            # 기사 문법 분석
+            grammar_analysis = analyzer.analyze_article_grammar(memo, difficulty)
+        elif content_type == "podcast":
+            # 팟캐스트 구어체 분석 먼저 수행
+            colloquial_expressions = analyzer.analyze_podcast_colloquialisms(memo, difficulty)
+            # 팟캐스트 학습 목표 생성 (구어체 표현 개수 반영)
+            learning_goals = analyzer.generate_podcast_learning_goals(memo, title, difficulty, len(colloquial_expressions))
+        
+    except Exception as e:
+        print(f"    ⚠️  LLM 분석 실패: {e}")
+        grammar_analysis = {}
+        colloquial_expressions = []
+        learning_goals = []
+    
+    # 기사인 경우 - 문법 분석 중심 템플릿
+    if content_type == "article":
+        # 제목 (H1)
+        children.append({
+            "object": "block",
+            "type": "heading_1",
+            "heading_1": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": f"📰 스페인어 기사 독해 ({difficulty} 수준)"
+                        }
+                    }
+                ]
+            }
+        })
+        
+        # 기사 정보 (H2)
+        children.append({
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "📅 기사 정보"
+                        }
+                    }
+                ]
+            }
+        })
+        
+        # 기사 메타 정보
+        from datetime import datetime
+        today = datetime.now().strftime('%Y년 %m월 %d일')
+        children.append({
+            "object": "block",
+            "type": "bulleted_list_item",
+            "bulleted_list_item": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "발행일: "
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": today
+                        },
+                        "annotations": {
+                            "bold": True
+                        }
+                    }
+                ]
+            }
+        })
+        
+        children.append({
+            "object": "block",
+            "type": "bulleted_list_item",
+            "bulleted_list_item": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "출처/주제: "
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": category or '일반 기사'
+                        },
+                        "annotations": {
+                            "bold": True
+                        }
+                    }
+                ]
+            }
+        })
+        
+        children.append({
+            "object": "block",
+            "type": "bulleted_list_item",
+            "bulleted_list_item": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": f"학습 목표: 15분 독해, {difficulty} 문법 구조 분석"
+                        }
+                    }
+                ]
+            }
+        })
+        
+        # 구분선
+        children.append({
+            "object": "block",
+            "type": "divider",
+            "divider": {}
+        })
+        
+        # 주요 문법 분석 (H2)
+        children.append({
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": f"📝 주요 문법 분석 ({difficulty} 수준)"
+                        }
+                    }
+                ]
+            }
+        })
+        
+        # 실제 분석된 문법 포인트들 추가
+        if grammar_analysis and grammar_analysis.get('original_sentence'):
+            # 원문 문장 먼저 표시 (실제 분석된 문장)
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "원문: "
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": grammar_analysis['original_sentence']
+                            },
+                            "annotations": {
+                                "bold": True
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            # 문법 내용 정리 제목
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "📌 문법 내용 정리:"
+                            },
+                            "annotations": {
+                                "bold": True
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            # 각 문법 구조를 자연스러운 형태로 표시
+            for grammar_item in grammar_analysis.get('grammar_analysis', []):
+                # 문법 구조 제목 (볼드)
+                children.append({
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [
+                            {
+                                "type": "text",
+                                "text": {
+                                    "content": grammar_item['title']
+                                },
+                                "annotations": {
+                                    "bold": True
+                                }
+                            }
+                        ]
+                    }
+                })
+                
+                # 설명 포인트들
+                for point in grammar_item.get('points', []):
+                    children.append({
+                        "object": "block",
+                        "type": "paragraph",
+                        "paragraph": {
+                            "rich_text": [
+                                {
+                                    "type": "text",
+                                    "text": {
+                                        "content": f"- {point}"
+                                    }
+                                }
+                            ]
+                        }
+                    })
+        else:
+            # 빈 템플릿 - 사용자 예시 형태로 자연스럽게 구성
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "원문: "
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "Esto, lógicamente, provoca que muchas personas busquen alternativas para disfrut..."
+                            },
+                            "annotations": {
+                                "bold": True
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "📌 문법 내용 정리:"
+                            },
+                            "annotations": {
+                                "bold": True
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            # 접속법 현재 예시
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "접속법 현재 (Presente de Subjuntivo)"
+                            },
+                            "annotations": {
+                                "bold": True
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "- \"busquen\" - buscar 동사의 접속법 현재 3인칭 복수형"
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "- \"que + 접속법\" 구조로 주관적 판단이나 감정을 표현"
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            # 동사 활용 예시
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "동사 활용"
+                            },
+                            "annotations": {
+                                "bold": True
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "- \"provoca\" - provocar 동사의 직설법 현재 3인칭 단수형"
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "- 규칙 동사 활용"
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            # 구문 구조 예시
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "구문 구조"
+                            },
+                            "annotations": {
+                                "bold": True
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "- \"Esto provoca que...\" - 결과나 원인을 나타내는 구조"
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "- 주절(직설법) + que + 종속절(접속법) 패턴"
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            # 어휘 및 표현 예시
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "어휘 및 표현"
+                            },
+                            "annotations": {
+                                "bold": True
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "- \"lógicamente\" - 부사로 사용되어 논리적 연결 표현 (삽입구)"
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "- \"muchas personas\" - 부정 형용사 + 명사 구조"
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "- \"alternativas para...\" - 목적을 나타내는 para + 동사원형"
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            # 문장 성분 예시
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "문장 성분"
+                            },
+                            "annotations": {
+                                "bold": True
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "- \"Esto\" - 주어 (지시대명사)"
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "- \"lógicamente\" - 부사구 (삽입구 역할)"
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "- \"que muchas personas busquen...\" - 목적절 (접속법 사용)"
+                            }
+                        }
+                    ]
+                }
+            })
+        
+        # AI 권장 학습 전략 (H2)
+        children.append({
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "🎯 AI 권장 학습 전략"
+                        }
+                    }
+                ]
+            }
+        })
+        
+        children.append({
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "문장의 "
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "시제 구조, 접속법, 부정사, 부사구"
+                        },
+                        "annotations": {
+                            "bold": True
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "를 포인트 삼아 분석\n"
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": f"{difficulty} 문장 구조 반복 노출 → 예문 작성 → 문장 따라쓰기"
+                        },
+                        "annotations": {
+                            "bold": True
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "로 정착"
+                        }
+                    }
+                ]
+            }
+        })
+        
+        # 개인 메모 (H2)
+        children.append({
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "💡 개인 메모"
+                        }
+                    }
+                ]
+            }
+        })
+        
+        children.append({
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "[개인 학습 메모 및 느낀 점 작성]"
+                        }
+                    }
+                ]
+            }
+        })
+    
+    # 팟캐스트인 경우 - 구어체 표현 중심 템플릿
+    elif content_type == "podcast":
+        # 제목 (H1)
+        children.append({
+            "object": "block",
+            "type": "heading_1",
+            "heading_1": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": f"🎧 팟캐스트 학습 ({difficulty} 수준)"
+                        }
+                    }
+                ]
+            }
+        })
+        
+        # 에피소드 정보 (H2)
+        children.append({
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "📺 에피소드 정보"
+                        }
+                    }
+                ]
+            }
+        })
+        
+        # 에피소드 메타 정보
+        children.append({
+            "object": "block",
+            "type": "bulleted_list_item",
+            "bulleted_list_item": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "제목: "
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": title
+                        },
+                        "annotations": {
+                            "bold": True
+                        }
+                    }
+                ]
+            }
+        })
+        
+        children.append({
+            "object": "block",
+            "type": "bulleted_list_item",
+            "bulleted_list_item": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "재생시간: "
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": f"{duration or '미정'}"
+                        },
+                        "annotations": {
+                            "bold": True
+                        }
+                    }
+                ]
+            }
+        })
+        
+        children.append({
+            "object": "block",
+            "type": "bulleted_list_item",
+            "bulleted_list_item": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "주제: "
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": category or '스페인어 학습'
+                        },
+                        "annotations": {
+                            "bold": True
+                        }
+                    }
+                ]
+            }
+        })
+        
+        # 학습 목표 (H2)
+        children.append({
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "🎯 학습 목표"
+                        }
+                    }
+                ]
+            }
+        })
+        
+        # 학습 목표 텍스트를 LLM이 생성한 목표로 대체
+        if learning_goals:
+            for goal in learning_goals:
+                children.append({
+                    "object": "block",
+                    "type": "bulleted_list_item",
+                    "bulleted_list_item": {
+                        "rich_text": [
+                            {
+                                "type": "text",
+                                "text": {
+                                    "content": goal
+                                }
+                            }
+                        ]
+                    }
+                })
+        else:
+            # 기본 목표 (LLM 분석 실패 시)
+            children.append({
+                "object": "block",
+                "type": "bulleted_list_item",
+                "bulleted_list_item": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": f"팟캐스트 주제 관련 어휘 학습 ({difficulty} 수준)"
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            children.append({
+                "object": "block",
+                "type": "bulleted_list_item",
+                "bulleted_list_item": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "구어체 표현 파악 및 실제 사용법 이해"
+                            }
+                        }
+                    ]
+                }
+            })
+            
+            children.append({
+                "object": "block",
+                "type": "bulleted_list_item",
+                "bulleted_list_item": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "자연스러운 발음과 억양 패턴 학습"
+                            }
+                        }
+                    ]
+                }
+            })
+        
+        # 구어체 표현 정리 (H2)
+        children.append({
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": f"🌍 구어체 표현 정리 ({difficulty} 수준)"
+                        }
+                    }
+                ]
+            }
+        })
+        
+        # 분석된 구어체 표현들을 템플릿 형태로 추가
+        if colloquial_expressions:
+            for i, expr in enumerate(colloquial_expressions, 1):
+                children.append({
+                    "object": "block",
+                    "type": "bulleted_list_item",
+                    "bulleted_list_item": {
+                        "rich_text": [
+                            {
+                                "type": "text",
+                                "text": {
+                                    "content": f"[표현 {i}]: "
+                                },
+                                "annotations": {
+                                    "bold": True
+                                }
+                            },
+                            {
+                                "type": "text",
+                                "text": {
+                                    "content": expr
+                                }
+                            }
+                        ]
+                    }
+                })
+        else:
+            # 빈 템플릿 - LLM 분석이 없을 때는 5개 기본 제공
+            for i in range(1, 6):
+                children.append({
+                    "object": "block",
+                    "type": "bulleted_list_item",
+                    "bulleted_list_item": {
+                        "rich_text": [
+                            {
+                                "type": "text",
+                                "text": {
+                                    "content": f"[표현 {i}]: "
+                                },
+                                "annotations": {
+                                    "bold": True
+                                }
+                            },
+                            {
+                                "type": "text",
+                                "text": {
+                                    "content": "[의미] - [예시 문장]"
+                                }
+                            }
+                        ]
+                    }
+                })
+        
+        # AI 분석 (H2)
+        children.append({
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "🤖 AI 분석"
+                        }
+                    }
+                ]
+            }
+        })
+        
+        children.append({
+            "object": "block",
+            "type": "bulleted_list_item",
+            "bulleted_list_item": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "검색어: "
+                        },
+                        "annotations": {
+                            "bold": True
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": f'"{title}"'
+                        }
+                    }
+                ]
+            }
+        })
+        
+        children.append({
+            "object": "block",
+            "type": "bulleted_list_item",
+            "bulleted_list_item": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "청취 전략: "
+                        },
+                        "annotations": {
+                            "bold": True
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "구어체 표현에 집중하여 듣기"
+                        }
+                    }
+                ]
+            }
+        })
+        
+        # 개인 메모 (H2)
+        children.append({
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "💡 개인 메모"
+                        }
+                    }
+                ]
+            }
+        })
+        
+        children.append({
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "[개인 학습 메모 및 느낀 점 작성]"
+                        }
+                    }
+                ]
+            }
+        })
+    
+    return children
 
 def main():
     print("=== Notion 페이지 생성 시작 ===")
@@ -697,13 +1688,14 @@ def main():
         'ARTICLE_TITLE': os.environ.get('ARTICLE_TITLE', ''),
         'ARTICLE_URL': os.environ.get('ARTICLE_URL', ''),
         'ARTICLE_CATEGORY': os.environ.get('ARTICLE_CATEGORY', ''),
-        'ARTICLE_DIFFICULTY': os.environ.get('ARTICLE_DIFFICULTY', 'B2'),  # 추가
+        'ARTICLE_DIFFICULTY': os.environ.get('ARTICLE_DIFFICULTY', 'B2'),
         'ARTICLE_MEMO': os.environ.get('ARTICLE_MEMO', ''),
         'PODCAST_TITLE': os.environ.get('PODCAST_TITLE', ''),
         'PODCAST_URL': os.environ.get('PODCAST_URL', ''),
         'PODCAST_APPLE': os.environ.get('PODCAST_APPLE', ''),
         'PODCAST_DURATION': os.environ.get('PODCAST_DURATION', ''),
         'PODCAST_TOPIC': os.environ.get('PODCAST_TOPIC', ''),
+        'PODCAST_DIFFICULTY': os.environ.get('PODCAST_DIFFICULTY', 'B2'),  # 팟캐스트 난이도 추가
         'PODCAST_MEMO': os.environ.get('PODCAST_MEMO', '')
     }
     
@@ -757,6 +1749,7 @@ def main():
             content_type="podcast",
             memo=env_vars['PODCAST_MEMO'],
             category=env_vars['PODCAST_TOPIC'],
+            difficulty=env_vars['PODCAST_DIFFICULTY'],  # 팟캐스트 난이도 추가
             duration=env_vars['PODCAST_DURATION'],
             is_alternative=False  # 일반 모드
         )
