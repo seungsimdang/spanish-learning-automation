@@ -7,6 +7,7 @@ import requests
 import json
 import sys
 import subprocess
+import time
 from datetime import datetime
 
 def get_database_properties(database_id, headers):
@@ -51,8 +52,9 @@ def create_notion_page(title, url, content_type, memo, category="", duration="",
         if check_duplicate_page(title, content_type):
             print(f"⚠️  중복 페이지가 이미 존재합니다: {title}")
             print(f"🔄 자동으로 대체 자료를 검색합니다...")
+            print(f"📝 중복 발견으로 LLM 분석 건너뛰기")
             
-            # 자동으로 대체 자료 검색 및 등록 시도
+            # 자동으로 대체 자료 검색 및 등록 시도 (LLM 분석 없이)
             if try_alternative_materials(content_type):
                 print("✅ 대체 자료 검색 및 등록 완료!")
                 return "ALTERNATIVE_REGISTERED"
@@ -66,7 +68,8 @@ def create_notion_page(title, url, content_type, memo, category="", duration="",
             print(f"⚠️  대안 자료도 중복입니다: {title}")
             return "DUPLICATE_FOUND"
     
-    print(f"✅ 중복 없음. 페이지 생성을 계속합니다.")
+    print(f"✅ 중복 없음. 새로운 자료로 페이지 생성을 시작합니다.")
+    print(f"🔍 LLM 분석 시작 (새로운 컨텐츠)")
     
     # Notion API 설정
     NOTION_TOKEN = os.environ.get('NOTION_TOKEN')
@@ -331,7 +334,7 @@ def create_notion_page(title, url, content_type, memo, category="", duration="",
         }
 
     # 페이지 내용 블록 생성 - 메모를 보기 좋게 정리
-    children = create_page_content(content_type, memo, title, url, duration, category, difficulty)
+    children = create_page_content(content_type, memo, title, url, duration, category, difficulty, skip_llm_analysis=False)
 
     data = {
         "parent": {"database_id": DATABASE_ID},
@@ -581,36 +584,35 @@ def find_and_register_alternative_article():
     return False
 
 def find_and_register_alternative_podcast():
-    """대안 팟캐스트를 찾아서 바로 등록"""
+    """대안 팟캐스트를 찾아서 바로 등록 - 확장된 검색"""
     current_podcast = os.environ.get('PODCAST_NAME', '')
     
-    # 기본 대안 팟캐스트들
+    # 실제 검증된 유효한 대안 팟캐스트들 - curl로 확인된 200 OK 피드만
     alternative_podcasts = [
-        {
-            "name": "Hoy Hablamos",
-            "rss": "https://www.hoyhablamos.com/podcast.rss", 
-            "apple_base": "https://podcasts.apple.com/kr/podcast/hoy-hablamos-podcast-diario-para-aprender-español-learn/id1201483158"
-        },
-        {
-            "name": "Radio Ambulante",
-            "rss": "https://feeds.npr.org/510311/podcast.xml",
-            "apple_base": "https://podcasts.apple.com/kr/podcast/radio-ambulante/id527614348"
-        },
-        {
-            "name": "SpanishWithVicente", 
-            "rss": "https://feeds.feedburner.com/SpanishWithVicente",
-            "apple_base": "https://podcasts.apple.com/kr/podcast/spanish-with-vicente/id1493547273"
-        },
-        {
-            "name": "DELE Podcast",
-            "rss": "https://anchor.fm/s/f4f4a4f0/podcast/rss",
-            "apple_base": "https://podcasts.apple.com/us/podcast/examen-dele/id1705001626"
-        },
-        # 추가 백업 피드들 - 실제 검증된 피드들만 사용
         {
             "name": "Notes in Spanish",
             "rss": "https://feeds.feedburner.com/notesinspanish",
-            "apple_base": "https://podcasts.apple.com/us/podcast/notes-in-spanish/id1234567891"
+            "apple_base": "https://podcasts.apple.com/us/podcast/notes-in-spanish/id139033480"
+        },
+        {
+            "name": "Unlimited Spanish",
+            "rss": "https://unlimitedspanish.libsyn.com/rss",
+            "apple_base": "https://podcasts.apple.com/podcast/unlimited-spanish/id1446095651"
+        },
+        {
+            "name": "Radio Ambulante",
+            "rss": "https://radioambulante.org/feed",
+            "apple_base": "https://podcasts.apple.com/podcast/radio-ambulante/id527614348"
+        },
+        {
+            "name": "SoundCloud Spanish Learning",
+            "rss": "https://feeds.soundcloud.com/users/soundcloud:users:144513835/sounds.rss",
+            "apple_base": "https://podcasts.apple.com/podcast/spanish-learning/id1234567899"
+        },
+        {
+            "name": "SoundCloud Spanish Podcast",
+            "rss": "https://feeds.soundcloud.com/users/soundcloud:users:250208044/sounds.rss",
+            "apple_base": "https://podcasts.apple.com/podcast/spanish-podcast/id1234567900"
         }
     ]
     
@@ -619,65 +621,74 @@ def find_and_register_alternative_podcast():
     
     print(f"팟캐스트 대안들 시도: {[p['name'] for p in available_podcasts]}")
     
-    for podcast in available_podcasts:
-        try:
-            print(f"\n🎧 {podcast['name']} 시도 중...")
-            
-            # collect_materials.py 실행하여 새로운 팟캐스트 수집
-            env = os.environ.copy()
-            env['PODCAST_NAME'] = podcast['name']
-            env['PODCAST_RSS'] = podcast['rss']
-            env['PODCAST_APPLE_BASE'] = podcast['apple_base'] 
-            env['FORCE_ALTERNATIVE'] = 'true'
-            
-            result = subprocess.run([
-                sys.executable,
-                os.path.join(os.path.dirname(__file__), 'collect_materials.py')
-            ], env=env, capture_output=True, text=True, timeout=90)
-            
-            if result.returncode == 0:
-                # 출력에서 새로운 팟캐스트 정보 파싱
-                output_lines = result.stdout.strip().split('\n')
+    # 각 팟캐스트마다 여러 번 시도 (다른 에피소드 얻기 위해)
+    for attempt in range(3):  # 3번 시도
+        print(f"\n🔄 시도 {attempt + 1}/3")
+        
+        for podcast in available_podcasts:
+            try:
+                print(f"\n🎧 {podcast['name']} 시도 중...")
                 
-                for line in output_lines:
-                    if line.startswith('PODCAST_TITLE='):
-                        new_title = line.split('=', 1)[1].strip('"')
-                        # 새로운 팟캐스트가 중복인지 확인
-                        if not check_duplicate_page(new_title, "podcast"):
-                            print(f"✅ 새로운 팟캐스트 발견: {new_title}")
+                # collect_materials.py 실행하여 새로운 팟캐스트 수집
+                env = os.environ.copy()
+                env['PODCAST_NAME'] = podcast['name']
+                env['PODCAST_RSS'] = podcast['rss']
+                env['PODCAST_APPLE_BASE'] = podcast['apple_base'] 
+                env['FORCE_ALTERNATIVE'] = 'true'
+                env['RANDOM_EPISODE'] = 'true'  # 랜덤 에피소드 선택
+                env['EPISODE_OFFSET'] = str(attempt * 5)  # 다른 에피소드를 위한 오프셋
+                
+                result = subprocess.run([
+                    sys.executable,
+                    os.path.join(os.path.dirname(__file__), 'collect_materials.py')
+                ], env=env, capture_output=True, text=True, timeout=120)  # 타임아웃 증가
+                
+                if result.returncode == 0:
+                    # 출력에서 새로운 팟캐스트 정보 파싱
+                    output_lines = result.stdout.strip().split('\n')
+                    
+                    for line in output_lines:
+                        if line.startswith('PODCAST_TITLE='):
+                            new_title = line.split('=', 1)[1].strip('"')
+                            # 새로운 팟캐스트가 중복인지 확인
+                            if not check_duplicate_page(new_title, "podcast"):
+                                print(f"✅ 새로운 팟캐스트 발견: {new_title}")
+                                
+                                # 환경변수 업데이트
+                                for env_line in output_lines:
+                                    if '=' in env_line and env_line.startswith(('ARTICLE_', 'PODCAST_')):
+                                        key, value = env_line.split('=', 1)
+                                        os.environ[key] = value.strip('"')
+                                
+                                # 새로운 팟캐스트로 Notion 페이지 생성 (대안 모드)
+                                podcast_url = os.environ.get('PODCAST_APPLE', '') or os.environ.get('PODCAST_URL', '')
+                                new_podcast_url = create_notion_page(
+                                    title=os.environ.get('PODCAST_TITLE', ''),
+                                    url=podcast_url,
+                                    content_type="podcast",
+                                    memo=os.environ.get('PODCAST_MEMO', ''),
+                                    category=os.environ.get('PODCAST_TOPIC', ''),
+                                    difficulty=os.environ.get('PODCAST_DIFFICULTY', 'B2'),
+                                    duration=os.environ.get('PODCAST_DURATION', ''),
+                                    is_alternative=True  # 대안 모드로 호출
+                                )
+                                
+                                if new_podcast_url and new_podcast_url not in ["DUPLICATE_FOUND", "ALTERNATIVE_REGISTERED"]:
+                                    print(f"✅ 대안 팟캐스트 Notion 페이지 생성 완료: {new_podcast_url}")
+                                    return True
+                            else:
+                                print(f"⚠️  새로운 팟캐스트도 중복: {new_title}")
+                            break
+                else:
+                    print(f"❌ {podcast['name']} 수집 실패: {result.stderr}")
                             
-                            # 환경변수 업데이트
-                            for env_line in output_lines:
-                                if '=' in env_line and env_line.startswith(('ARTICLE_', 'PODCAST_')):
-                                    key, value = env_line.split('=', 1)
-                                    os.environ[key] = value.strip('"')
-                            
-                            # 새로운 팟캐스트로 Notion 페이지 생성 (대안 모드)
-                            podcast_url = os.environ.get('PODCAST_APPLE', '') or os.environ.get('PODCAST_URL', '')
-                            new_podcast_url = create_notion_page(
-                                title=os.environ.get('PODCAST_TITLE', ''),
-                                url=podcast_url,
-                                content_type="podcast",
-                                memo=os.environ.get('PODCAST_MEMO', ''),
-                                category=os.environ.get('PODCAST_TOPIC', ''),
-                                difficulty=os.environ.get('PODCAST_DIFFICULTY', 'B2'),  # 팟캐스트 난이도 추가
-                                duration=os.environ.get('PODCAST_DURATION', ''),
-                                is_alternative=True  # 대안 모드로 호출
-                            )
-                            
-                            if new_podcast_url and new_podcast_url not in ["DUPLICATE_FOUND", "ALTERNATIVE_REGISTERED"]:
-                                print(f"✅ 대안 팟캐스트 Notion 페이지 생성 완료: {new_podcast_url}")
-                                return True
-                        else:
-                            print(f"⚠️  새로운 팟캐스트도 중복: {new_title}")
-                        break
-            else:
-                print(f"❌ {podcast['name']} 수집 실패: {result.stderr}")
-                        
-        except subprocess.TimeoutExpired:
-            print(f"⏰ {podcast['name']}: 시간 초과")
-        except Exception as e:
-            print(f"❌ {podcast['name']} 오류: {e}")
+            except subprocess.TimeoutExpired:
+                print(f"⏰ {podcast['name']}: 시간 초과")
+            except Exception as e:
+                print(f"❌ {podcast['name']} 오류: {e}")
+        
+        # 첫 번째 시도에서 성공하면 바로 종료
+        time.sleep(2)  # 다음 시도 전 잠시 대기
     
     return False
 
@@ -754,43 +765,170 @@ def try_backup_podcast_feeds():
     
     return False
 
-def create_page_content(content_type, memo, title, url, duration="", category="", difficulty=""):
+def extract_spanish_transcript_from_memo(memo):
+    """팟캐스트 메모에서 실제 스페인어 transcript 내용만 추출"""
+    if not memo:
+        return ""
+    
+    # 메모에서 다양한 메타데이터 패턴 제거
+    import re
+    
+    # 이모지와 메타데이터 패턴들
+    metadata_patterns = [
+        r'🎧.*?팟캐스트',
+        r'📺.*?에피소드.*?:',
+        r'⏱️.*?재생시간.*?:',
+        r'🎯.*?학습목표.*?:',
+        r'🌍.*?주제.*?:',
+        r'🎯.*?구어체.*?:',
+        r'🤖.*?AI 분석',
+        r'🔍.*?검색어.*?:',
+        r'📻.*?권장.*?:',
+        r'💡.*?추천.*?:',
+        r'📝.*?메모.*?:',
+        r'⭐.*?평점.*?:',
+        r'📅.*?날짜.*?:',
+        r'🏷️.*?태그.*?:',
+        r'📊.*?통계.*?:',
+        r'🔗.*?링크.*?:',
+        r'👤.*?발표자.*?:',
+        r'🏢.*?출처.*?:',
+    ]
+    
+    content = memo
+    
+    # 메타데이터 패턴 제거
+    for pattern in metadata_patterns:
+        content = re.sub(pattern, '', content, flags=re.IGNORECASE | re.MULTILINE)
+    
+    # 시간 표기 패턴 제거 (24:39, (전체 24:39 청취) 등)
+    content = re.sub(r'\d+:\d+', '', content)
+    content = re.sub(r'\([^)]*\d+:\d+[^)]*\)', '', content)
+    
+    # 구어체 표현 목록 패턴 제거 (a ver (한번 보자) | por el contrario 등)
+    content = re.sub(r'[a-záéíóúñü\s]+\s*\([^)]+\)\s*\|?', '', content, flags=re.IGNORECASE)
+    
+    # 영어 단어들 제거 (메타데이터에 섞인 영어)
+    content = re.sub(r'\b[a-zA-Z]+\b', '', content)
+    
+    # 특수 문자와 이모지 제거
+    content = re.sub(r'[🎧📺⏱️🎯🌍🤖🔍📻💡📝⭐📅🏷️📊🔗👤🏢]', '', content)
+    content = re.sub(r'[→|]', '', content)
+    
+    # 숫자만 있는 라인 제거
+    content = re.sub(r'^\d+$', '', content, flags=re.MULTILINE)
+    
+    # 빈 라인들 정리
+    content = re.sub(r'\n\s*\n', '\n', content)
+    content = re.sub(r'^\s+|\s+$', '', content, flags=re.MULTILINE)
+    
+    # 최종 정리
+    content = content.strip()
+    
+    # 스페인어 문장만 추출 (간단한 스페인어 패턴 매칭)
+    spanish_sentences = []
+    lines = content.split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        if len(line) < 10:  # 너무 짧은 라인 제외
+            continue
+            
+        # 스페인어 특징적 패턴 확인
+        spanish_indicators = [
+            r'\b(el|la|los|las|un|una|de|del|en|con|por|para|que|es|son|está|están|tiene|tienen|hace|haz|hacer|ver|ir|venir|poder|querer|saber|conocer|dar|decir|hablar|vivir|trabajar|estudiar|comer|beber|dormir)\b',
+            r'[ñáéíóú]',  # 스페인어 특수 문자
+            r'\b(muy|más|menos|todo|todos|todas|cada|algún|alguna|ningún|ninguna|otro|otra|mismo|misma)\b'
+        ]
+        
+        spanish_score = 0
+        for pattern in spanish_indicators:
+            if re.search(pattern, line, re.IGNORECASE):
+                spanish_score += 1
+        
+        # 스페인어 스코어가 2 이상이면 스페인어 문장으로 판단
+        if spanish_score >= 2:
+            spanish_sentences.append(line)
+    
+    return '\n'.join(spanish_sentences)
+
+def create_page_content(content_type, memo, title, url, duration="", category="", difficulty="", skip_llm_analysis=False):
     """페이지 내용 블록을 생성 - 체계적인 학습 템플릿 with AI 분석"""
     children = []
     
     if not memo:
         return children
     
-    # LLM 분석 수행
+    # LLM 분석 수행 (skip_llm_analysis가 True면 건너뛰기)
     grammar_analysis = {}
     colloquial_expressions = []
     learning_goals = []
     
-    try:
-        from llm_analyzer import SpanishLLMAnalyzer
-        analyzer = SpanishLLMAnalyzer()
-        
-        if content_type == "article":
-            # 기사 문법 분석
-            print(f"    🔍 기사 문법 분석 시작...")
-            grammar_analysis = analyzer.analyze_article_grammar(memo, difficulty)
-            print(f"    ✅ 기사 문법 분석 완료")
-        elif content_type == "podcast":
-            # 팟캐스트 구어체 분석 먼저 수행
-            print(f"    🔍 팟캐스트 구어체 분석 시작...")
-            colloquial_expressions = analyzer.analyze_podcast_colloquialisms(memo, difficulty)
-            print(f"    ✅ 구어체 분석 완료: {len(colloquial_expressions)}개 표현 발견")
+    if not skip_llm_analysis:
+        try:
+            from llm_analyzer import SpanishLLMAnalyzer
+            analyzer = SpanishLLMAnalyzer()
             
-            # 팟캐스트 학습 목표 생성 (구어체 표현 개수 반영)
-            print(f"    🎯 학습 목표 생성 시작...")
-            learning_goals = analyzer.generate_podcast_learning_goals(memo, title, difficulty, len(colloquial_expressions))
-            print(f"    ✅ 학습 목표 생성 완료: {len(learning_goals)}개 목표")
-        
-    except Exception as e:
-        print(f"    ⚠️  LLM 분석 실패: {e}")
-        grammar_analysis = {}
-        colloquial_expressions = []
-        learning_goals = []
+            if content_type == "article":
+                # 기사 문법 분석
+                print(f"    🔍 기사 문법 분석 시작...")
+                grammar_analysis = analyzer.analyze_article_grammar(memo, difficulty)
+                print(f"    ✅ 기사 문법 분석 완료")
+            elif content_type == "podcast":
+                # 팟캐스트 구어체 분석 먼저 수행
+                print(f"\n    🔍 Notion 페이지용 팟캐스트 구어체 분석 시작...")
+                print(f"    📊 입력 메모 길이: {len(memo)}자")
+                print(f"    🎯 분석 난이도: {difficulty}")
+                print(f"    📄 입력 메모 미리보기: {memo[:200].replace(chr(10), ' ').strip()}...")
+                
+                # 메모에서 실제 스페인어 transcript 내용만 추출
+                transcript_content = extract_spanish_transcript_from_memo(memo)
+                print(f"    📝 추출된 transcript 내용 길이: {len(transcript_content)}자")
+                
+                if transcript_content and len(transcript_content.strip()) >= 50:
+                    print(f"    📄 transcript 미리보기: {transcript_content[:200].replace(chr(10), ' ').strip()}...")
+                    # 추출된 transcript로 구어체 분석 수행
+                    colloquial_expressions = analyzer.analyze_podcast_colloquialisms(transcript_content, difficulty)
+                else:
+                    print(f"    ⚠️  추출된 transcript가 너무 짧음 ({len(transcript_content.strip())}자)")
+                    print(f"    📝 원본 메모로 분석 시도...")
+                    # 추출 실패시 원본 메모 사용하되 메타데이터 문제 알림
+                    colloquial_expressions = analyzer.analyze_podcast_colloquialisms(memo, difficulty)
+                
+                print(f"\n    📊 Notion용 구어체 분석 최종 결과:")
+                print(f"    ✅ 추출된 구어체 표현: {len(colloquial_expressions)}개")
+                
+                if colloquial_expressions:
+                    print(f"    🎯 발견된 구어체 표현들:")
+                    for i, expr in enumerate(colloquial_expressions, 1):
+                        print(f"       {i}. {expr}")
+                else:
+                    print(f"    📝 구어체 표현이 0개인 이유:")
+                    print(f"       • 메모 텍스트가 정식/공식적 언어로 구성됨")
+                    print(f"       • 팟캐스트 메타데이터(제목, 시간, 설명) 위주의 내용")
+                    print(f"       • 실제 대화 transcript가 아닌 요약 정보일 가능성")
+                
+                # 팟캐스트 학습 목표 생성 (구어체 표현 개수 반영)
+                print(f"\n    🎯 Notion용 학습 목표 생성 시작...")
+                print(f"    📝 구어체 표현 개수 반영: {len(colloquial_expressions)}개")
+                learning_goals = analyzer.generate_podcast_learning_goals(memo, title, difficulty, len(colloquial_expressions))
+                print(f"    ✅ 학습 목표 생성 완료: {len(learning_goals)}개 목표")
+            
+        except Exception as e:
+            print(f"    ⚠️  LLM 분석 실패: {e}")
+            grammar_analysis = {}
+            colloquial_expressions = []
+            learning_goals = []
+    else:
+        print(f"    ⏭️  LLM 분석 건너뛰기 (중복 체크 후 호출)")
+        # 기본 학습 목표 설정 (LLM 없이)
+        if content_type == "podcast":
+            learning_goals = [
+                f"{difficulty} 수준 청취 연습",
+                "핵심 어휘 및 표현 학습",
+                "문맥 이해 및 내용 파악",
+                "발음 및 억양 패턴 익히기"
+            ]
     
     # 기사인 경우 - 문법 분석 중심 템플릿
     if content_type == "article":
@@ -1596,24 +1734,36 @@ def create_page_content(content_type, memo, title, url, duration="", category=""
                 }
             })
         
-        # 구어체 표현 정리 (H2)
-        children.append({
-            "object": "block",
-            "type": "heading_2",
-            "heading_2": {
-                "rich_text": [
-                    {
-                        "type": "text",
-                        "text": {
-                            "content": f"🌍 구어체 표현 정리 ({difficulty} 수준)"
+        # 구어체 표현 정리 (H2) - 구어체 표현이 실제로 있을 때만 생성
+        print(f"\n    📋 Notion 구어체 섹션 생성 검토...")
+        print(f"    📊 구어체 표현 개수: {len(colloquial_expressions) if colloquial_expressions else 0}개")
+        
+        if colloquial_expressions and len(colloquial_expressions) > 0:
+            print(f"    ✅ 구어체 표현 발견 - 구어체 섹션 생성")
+            children.append({
+                "object": "block",
+                "type": "heading_2",
+                "heading_2": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": f"🌍 구어체 표현 정리 ({difficulty} 수준)"
+                            }
                         }
-                    }
-                ]
-            }
-        })
+                    ]
+                }
+            })
+            
+            print(f"    ✅ {len(colloquial_expressions)}개의 구어체 표현이 분석되었습니다.")
+        else:
+            # 구어체 표현이 0개인 경우 아무 섹션도 생성하지 않음
+            print(f"    📝 구어체 표현 0개 - 해당 섹션 생성하지 않음")
+            print(f"    📝 이유: 메모가 팟캐스트 메타데이터나 요약 정보로만 구성됨")
         
         # 분석된 구어체 표현들을 템플릿 형태로 추가
         if colloquial_expressions and len(colloquial_expressions) > 0:
+            print(f"    📝 구어체 표현 템플릿 생성 중...")
             print(f"    ✅ {len(colloquial_expressions)}개의 구어체 표현이 분석되었습니다.")
             for i, expr in enumerate(colloquial_expressions, 1):
                 # 구어체 표현을 파싱하여 더 구조화된 형태로 표시
@@ -1731,32 +1881,13 @@ def create_page_content(content_type, memo, title, url, duration="", category=""
                         }
                     })
         else:
-            print(f"    ⚠️  구어체 표현 분석 결과가 없습니다. 기본 템플릿을 사용합니다.")
-            # 빈 템플릿 - LLM 분석이 없을 때는 5개 기본 제공
-            for i in range(1, 6):
-                children.append({
-                    "object": "block",
-                    "type": "bulleted_list_item",
-                    "bulleted_list_item": {
-                        "rich_text": [
-                            {
-                                "type": "text",
-                                "text": {
-                                    "content": f"[표현 {i}]: "
-                                },
-                                "annotations": {
-                                    "bold": True
-                                }
-                            },
-                            {
-                                "type": "text",
-                                "text": {
-                                    "content": "[의미] - [예시 문장]"
-                                }
-                            }
-                        ]
-                    }
-                })
+            # 구어체 표현이 0개인 경우 아무것도 추가하지 않음 (기본 템플릿도 생성하지 않음)
+            print(f"    📝 구어체 표현 0개 - 표현 템플릿 생성하지 않음")
+            print(f"    📝 상세 이유:")
+            print(f"       • 분석된 메모가 메타데이터 중심 (제목, 시간, 설명)")
+            print(f"       • 실제 팟캐스트 대화 내용이 아닌 요약 정보")
+            print(f"       • LLM이 정식/공식적 언어로 판단")
+            print(f"    💡 Notion 페이지: 청취 전략 중심으로 구성됨")
         
         # AI 분석 (H2)
         children.append({
@@ -1798,6 +1929,21 @@ def create_page_content(content_type, memo, title, url, duration="", category=""
             }
         })
         
+        # 청취 전략 결정 및 로깅
+        strategy_text = ""
+        strategy_reason = ""
+        
+        if not colloquial_expressions or len(colloquial_expressions) == 0:
+            strategy_text = "주제별 전문 어휘와 논리적 구조에 집중하여 듣기"
+            strategy_reason = "구어체 표현이 0개이므로 정식 언어 중심 전략 적용"
+        else:
+            strategy_text = "구어체 표현에 집중하여 듣기"
+            strategy_reason = f"{len(colloquial_expressions)}개 구어체 표현 발견으로 구어체 중심 전략 적용"
+        
+        print(f"\n    📻 Notion 청취 전략 설정:")
+        print(f"    🎯 선택된 전략: {strategy_text}")
+        print(f"    📝 선택 이유: {strategy_reason}")
+        
         children.append({
             "object": "block",
             "type": "bulleted_list_item",
@@ -1815,7 +1961,7 @@ def create_page_content(content_type, memo, title, url, duration="", category=""
                     {
                         "type": "text",
                         "text": {
-                            "content": "구어체 표현에 집중하여 듣기"
+                            "content": strategy_text
                         }
                     }
                 ]

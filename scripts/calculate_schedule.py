@@ -28,56 +28,48 @@ def main():
         reading_url = "https://elpais.com/opinion/"
         reading_difficulty = "C1"
         
-    # 팟캐스트 일정 (RSS 피드와 Apple Podcasts 링크) - 검증된 실제 작동하는 피드 사용
+    # 팟캐스트 일정 - 실제 curl 테스트로 검증된 스페인어 피드들만 사용
     podcast_schedule = {
-        0: {
+        0: {  # 월요일
             "name": "SpanishPodcast",
-            "rss": "https://feeds.feedburner.com/SpanishPodcast",  # 검증된 피드
+            "rss": "https://feeds.feedburner.com/SpanishPodcast",  # ✅ 검증됨
             "apple_base": "https://podcasts.apple.com/us/podcast/spanishpodcast/id70077665",
             "region": "스페인",
             "backup_url": "https://spanishpodcast.org/"
         },
-        1: {
-            "name": "Radio Ambulante", 
-            "rss": "https://feeds.simplecast.com/54nAGcIl",  # 검증된 Radio Ambulante 피드
-            "apple_base": "https://podcasts.apple.com/kr/podcast/radio-ambulante/id527614348",
-            "region": "중남미",
-            "backup_url": "https://radioambulante.org/"
+        1: {  # 화요일
+            "name": "Hoy Hablamos",
+            "rss": "https://www.hoyhablamos.com/feed/podcast/",  # ✅ 검증됨
+            "apple_base": "https://podcasts.apple.com/es/podcast/hoy-hablamos/id1455031513",
+            "region": "스페인",
+            "backup_url": "https://hoyhablamos.com/"
         },
-        2: {
-            "name": "Españolistos",
-            "rss": "https://creators.spotify.com/pod/show/espanolistos/rss",  # 검증된 피드
-            "apple_base": "https://podcasts.apple.com/us/podcast/espa%C3%B1olistos/id1508733186",
-            "region": "남미",
-            "backup_url": "https://espanolistos.com/",
-            "backup_feeds": [
-                {
-                    "name": "SpanishPodcast",
-                    "rss": "https://feeds.feedburner.com/SpanishPodcast",
-                    "apple_base": "https://podcasts.apple.com/us/podcast/spanishpodcast/id70077665"
-                },
-                {
-                    "name": "Radio Ambulante",
-                    "rss": "https://feeds.simplecast.com/54nAGcIl", 
-                    "apple_base": "https://podcasts.apple.com/kr/podcast/radio-ambulante/id527614348"
-                }
-            ]
-        },
-        3: {
-            "name": "Radio Ambulante",
-            "rss": "https://feeds.simplecast.com/54nAGcIl",  # 검증된 피드로 변경
-            "apple_base": "https://podcasts.apple.com/kr/podcast/radio-ambulante/id527614348", 
-            "region": "중남미",
-            "backup_url": "https://radioambulante.org/"
-        },
-        4: {
-            "name": "SpanishPodcast (금요일)",
-            "rss": "https://feeds.feedburner.com/SpanishPodcast",  # 검증된 피드 재사용
+        2: {  # 수요일
+            "name": "SpanishPodcast",
+            "rss": "https://feeds.feedburner.com/SpanishPodcast",  # ✅ 검증됨 (Españolistos 대체)
             "apple_base": "https://podcasts.apple.com/us/podcast/spanishpodcast/id70077665",
-            "region": "스페인", 
+            "region": "스페인",
+            "backup_url": "https://spanishpodcast.org/"
+        },
+        3: {  # 목요일
+            "name": "Hoy Hablamos",
+            "rss": "https://www.hoyhablamos.com/feed/podcast/",  # ✅ 검증됨 (Radio Ambulante 대체)
+            "apple_base": "https://podcasts.apple.com/es/podcast/hoy-hablamos/id1455031513",
+            "region": "스페인",
+            "backup_url": "https://hoyhablamos.com/"
+        },
+        4: {  # 금요일
+            "name": "SpanishPodcast",
+            "rss": "https://feeds.feedburner.com/SpanishPodcast",  # ✅ 검증됨
+            "apple_base": "https://podcasts.apple.com/us/podcast/spanishpodcast/id70077665",
+            "region": "스페인",
             "backup_url": "https://spanishpodcast.org/"
         }
     }
+    
+    # 제거된 피드들 (curl 테스트에서 문제 확인됨):
+    # - Radio Ambulante (https://feeds.simplecast.com/54nAGcIl): 영어 "The Daily" 반환
+    # - Españolistos (https://creators.spotify.com/pod/show/espanolistos/rss): HTML 페이지 반환
 
     podcast_info = podcast_schedule.get(weekday, podcast_schedule[0])
 

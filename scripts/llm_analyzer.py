@@ -67,22 +67,54 @@ class SpanishLLMAnalyzer:
         Extract colloquial expressions from podcast transcript using LLM
         팟캐스트 transcript에서 구어체 표현 추출
         """
+        print(f"\n    🔍 구어체 분석 시작")
+        print(f"    📊 원본 텍스트 길이: {len(transcript) if transcript else 0}자")
+        
         if not transcript:
+            print(f"    ❌ 분석 실패: transcript가 비어있음")
+            return []
+        
+        # 원본 텍스트 내용 분석
+        original_preview = transcript[:200].replace('\n', ' ').strip()
+        print(f"    📄 원본 텍스트 미리보기: {original_preview}...")
+        
+        # 메타데이터만 있는지 확인
+        if self.is_metadata_only(transcript):
+            print(f"    ⚠️  메타데이터만 포함된 콘텐츠로 판단됨 - 구어체 분석 건너뛰기")
+            print(f"    📝 메타데이터 유형: 제목, 설명, 기술적 정보만 포함")
             return []
         
         # 텍스트 정리 및 인코딩 문제 해결
-        transcript = self.clean_text(transcript)
+        cleaned_transcript = self.clean_text(transcript)
+        print(f"    🧹 텍스트 정리 후 길이: {len(cleaned_transcript)}자")
+        
+        # 이중 언어 콘텐츠에서 스페인어 부분만 추출
+        spanish_transcript = self.extract_spanish_content(cleaned_transcript)
+        print(f"    🇪🇸 스페인어 추출 후 길이: {len(spanish_transcript)}자")
         
         # 정리된 텍스트가 비어있거나 너무 짧으면 건너뛰기
-        if len(transcript.strip()) < 50:
-            print(f"    ⚠️  정리된 텍스트가 너무 짧습니다: {len(transcript.strip())}자")
+        if len(spanish_transcript.strip()) < 50:
+            print(f"    ❌ 분석 실패: 정리된 텍스트가 너무 짧음 ({len(spanish_transcript.strip())}자)")
+            print(f"    📝 실패 원인: 스페인어 콘텐츠 추출 후 의미있는 내용이 부족")
             return []
         
         # 텍스트가 너무 길면 처음 2000자만 사용
-        if len(transcript) > 2000:
-            transcript = transcript[:2000] + "..."
+        if len(spanish_transcript) > 2000:
+            spanish_transcript = spanish_transcript[:2000] + "..."
+            print(f"    ✂️  텍스트 길이 조정: 2000자로 제한")
         
-        print(f"    📝 정리된 텍스트 미리보기: {transcript[:100]}...")
+        # LLM 분석에 사용될 실제 텍스트 상세 로깅
+        final_preview = spanish_transcript[:300].replace('\n', ' ').strip()
+        print(f"    🤖 LLM 분석 대상 텍스트 미리보기: {final_preview}...")
+        print(f"    📏 LLM 분석 대상 텍스트 길이: {len(spanish_transcript)}자")
+        
+        # 텍스트 유형 분석
+        text_type = self.analyze_text_type(spanish_transcript)
+        print(f"    📋 텍스트 유형 분석: {text_type}")
+        
+        # 구어체 표현 가능성 예측
+        colloquial_likelihood = self.predict_colloquial_likelihood(spanish_transcript)
+        print(f"    🎯 구어체 표현 발견 가능성: {colloquial_likelihood}")
         
         prompt = f"""
 You are analyzing Spanish text to find ACTUAL colloquial expressions that appear in the text.
@@ -112,23 +144,39 @@ If no colloquial expressions are found in this formal text, respond with: NO_COL
         
         response = self._make_api_call(prompt, max_tokens=400)
         
+        print(f"    🤖 LLM 응답 받음: {len(response) if response else 0}자")
+        
         if not response:
+            print(f"    ❌ LLM 응답 실패 - API 호출 오류")
             return []
+        
+        # LLM 응답 내용 로깅
+        response_preview = response[:200].replace('\n', ' ').strip()
+        print(f"    📄 LLM 응답 미리보기: {response_preview}...")
         
         # "NO_COLLOQUIAL_EXPRESSIONS_FOUND" 응답 처리
         if "NO_COLLOQUIAL_EXPRESSIONS_FOUND" in response:
-            print(f"    📝 LLM 분석 결과: 텍스트에 구어체 표현이 없음")
+            print(f"    ✅ LLM 분석 완료: 텍스트에 구어체 표현이 없음을 확인")
+            print(f"    📝 분석 결과: 제공된 텍스트가 정식/공식적 언어로 구성됨")
             return []
         
         # 응답에서 표현들 추출
         expressions = []
         lines = response.split('\n')
         
-        for line in lines:
+        print(f"    🔍 구어체 표현 파싱 시작: {len(lines)}개 라인 분석")
+        
+        for i, line in enumerate(lines):
             line = line.strip()
-            if line.startswith('-') and '"' in line and '→' in line:
+            print(f"    📝 라인 {i+1} 분석: {line}")
+            
+            # 다양한 형식 지원: 
+            # 1. "expression" → meaning (context)
+            # 2. - "expression" → meaning (context)  
+            # 3. expression → meaning
+            if '"' in line and '→' in line:
                 try:
-                    # "- "expression" → meaning (context)" 형식 파싱
+                    # 따옴표로 묶인 표현 추출
                     start_quote = line.find('"')
                     end_quote = line.find('"', start_quote + 1)
                     if start_quote != -1 and end_quote != -1:
@@ -141,11 +189,54 @@ If no colloquial expressions are found in this formal text, respond with: NO_COL
                                 meaning = meaning_part.split('(')[0].strip()
                             else:
                                 meaning = meaning_part.strip()
-                            expressions.append(f"{expression} ({meaning})")
+                            
+                            full_expression = f"{expression} ({meaning})"
+                            expressions.append(full_expression)
+                            print(f"    ✅ 구어체 표현 발견: {full_expression}")
+                        else:
+                            print(f"    ⚠️  → 기호 없음")
+                    else:
+                        print(f"    ⚠️  따옴표 쌍이 맞지 않음")
                 except Exception as e:
-                    print(f"구어체 표현 파싱 오류: {e}")
+                    print(f"    ⚠️  구어체 표현 파싱 오류 (라인 {i+1}): {e}")
+                    print(f"    📝 문제 라인: {line}")
                     continue
+            elif '→' in line and not line.startswith('#') and line.strip():
+                # 따옴표 없이 → 만 있는 경우도 처리
+                try:
+                    parts = line.split('→')
+                    if len(parts) >= 2:
+                        expression_part = parts[0].strip()
+                        meaning_part = parts[1].strip()
+                        
+                        # 앞의 불필요한 기호 제거 (-, *, 등)
+                        expression_part = expression_part.lstrip('- *•').strip()
+                        
+                        # (usage context) 부분 제거
+                        if '(' in meaning_part:
+                            meaning = meaning_part.split('(')[0].strip()
+                        else:
+                            meaning = meaning_part.strip()
+                        
+                        if expression_part and meaning:
+                            full_expression = f"{expression_part} ({meaning})"
+                            expressions.append(full_expression)
+                            print(f"    ✅ 구어체 표현 발견: {full_expression}")
+                except Exception as e:
+                    print(f"    ⚠️  대안 파싱 오류 (라인 {i+1}): {e}")
+                    continue
+            else:
+                print(f"    ⚠️  구어체 표현 형식이 아님")
+                continue
         
+        print(f"    📊 최종 구어체 표현 개수: {len(expressions)}개")
+        
+        if len(expressions) == 0:
+            print(f"    🤔 구어체 표현이 0개인 이유 분석:")
+            print(f"       • LLM이 텍스트를 정식/공식적 언어로 판단")
+            print(f"       • 텍스트에 대화체/비공식적 표현이 실제로 없음")
+            print(f"       • 메타데이터나 설명문 위주의 내용일 가능성")
+            
         return expressions[:5]  # 최대 5개 반환
     
     def analyze_article_grammar(self, article_content: str, difficulty: str = "B2") -> Dict[str, any]:
@@ -354,9 +445,46 @@ Respond with only the CEFR level (e.g., "B2" or "B2+" or "C1"), no additional te
         clean_content = self.clean_text(content)
         
         # 구어체 표현 개수에 따른 목표 조정
-        colloquial_goal = f"구어체 표현 {colloquial_count}개" if colloquial_count > 0 else "구어체 표현"
-        
-        prompt = f"""
+        if colloquial_count == 0:
+            # 구어체 표현이 0개인 경우 다른 학습 목표에 집중
+            prompt = f"""
+Analyze this Spanish podcast episode and generate 3-4 specific, actionable learning goals for a {difficulty} level Spanish learner.
+
+PODCAST TITLE: {title}
+PODCAST CONTENT: {clean_content[:1500]}
+COLLOQUIAL EXPRESSIONS FOUND: 0 expressions (focus on other learning aspects)
+
+Since no colloquial expressions were found in the analysis, focus on these alternative learning aspects:
+1. Main topic/theme comprehension and vocabulary
+2. Formal/academic language structures present
+3. Cultural and contextual learning opportunities
+4. Advanced listening comprehension strategies
+5. Grammar patterns and sentence structures
+6. Register and tone analysis
+
+Create learning goals that are:
+- Specific and measurable
+- Appropriate for {difficulty} level
+- Focus on formal language skills and comprehension strategies
+- Encourage deep content understanding
+- Be realistic about vocabulary numbers (5-10 key words, not excessive amounts)
+- EXCLUDE colloquial expression analysis since none were found
+
+Format your response as a numbered list in Korean:
+1. [구체적인 학습 목표 1]
+2. [구체적인 학습 목표 2]  
+3. [구체적인 학습 목표 3]
+(4. [추가 목표 if relevant])
+
+Examples of good learning goals for formal content:
+- 에피소드 주제와 관련된 전문 어휘 및 표현 5-8개 학습
+- 화자의 논리적 구조와 주장 전개 방식 파악
+- 스페인어 정치/사회적 맥락과 문화적 배경 이해
+- 복합문과 고급 문법 구조 분석 및 학습
+"""
+        else:
+            # 구어체 표현이 있는 경우 기존 로직
+            prompt = f"""
 Analyze this Spanish podcast episode and generate 3-4 specific, actionable learning goals for a {difficulty} level Spanish learner.
 
 PODCAST TITLE: {title}
@@ -397,7 +525,7 @@ Examples of good learning goals:
         response = self._make_api_call(prompt, max_tokens=600)
         
         if not response:
-            # 기본 목표 반환 (구어체 표현 개수 반영)
+            # 기본 목표 반환 (구어체 표현 개수에 따라 다른 목표)
             if colloquial_count > 0:
                 return [
                     f"팟캐스트 주제 관련 핵심 어휘 5-7개 학습 ({difficulty} 수준)",
@@ -405,10 +533,11 @@ Examples of good learning goals:
                     "자연스러운 발음과 억양 패턴 학습"
                 ]
             else:
+                # 구어체 표현이 0개인 경우 다른 학습 목표 제공
                 return [
-                    f"팟캐스트 주제 관련 어휘 학습 ({difficulty} 수준)",
-                    "스페인어 구어체 표현 파악 및 이해",
-                    "자연스러운 발음과 억양 패턴 학습"
+                    f"팟캐스트 주제 관련 전문 어휘 및 표현 5-7개 학습 ({difficulty} 수준)",
+                    "화자의 논리적 구조와 주장 전개 방식 파악",
+                    "스페인어 정치/사회적 맥락과 문화적 배경 이해"
                 ]
         
         # 응답에서 목표들 추출
@@ -433,8 +562,224 @@ Examples of good learning goals:
                     goals.append(goal)
         
         # 3-4개 목표 반환
-        return goals[:4] if goals else [
-            f"팟캐스트 주제 관련 어휘 학습 ({difficulty} 수준)",
-            "스페인어 구어체 표현 파악 및 이해",
-            "자연스러운 발음과 억양 패턴 학습"
+        if goals:
+            return goals[:4]
+        else:
+            # 구어체 표현 개수에 따른 fallback 목표
+            if colloquial_count > 0:
+                return [
+                    f"팟캐스트 주제 관련 핵심 어휘 학습 ({difficulty} 수준)",
+                    f"분석된 구어체 표현 {colloquial_count}개 정리 및 활용",
+                    "자연스러운 발음과 억양 패턴 학습"
+                ]
+            else:
+                return [
+                    f"팟캐스트 주제 관련 전문 어휘 학습 ({difficulty} 수준)",
+                    "화자의 논리적 구조와 주장 전개 방식 파악",
+                    "스페인어 정치/사회적 맥락과 문화적 배경 이해"
+                ]
+    
+    def simple_language_detection(self, content: str) -> str:
+        """
+        Simple language detection using LLM - returns SPANISH or ENGLISH
+        LLM을 사용한 간단한 언어 검증
+        """
+        if not content:
+            return "UNKNOWN"
+        
+        # 텍스트 정리
+        content = self.clean_text(content)
+        
+        # 너무 긴 경우 처음 부분만 사용
+        if len(content) > 1000:
+            content = content[:1000] + "..."
+        
+        prompt = f"""
+Analyze the following text and determine if it's primarily in Spanish or English.
+
+Text to analyze:
+{content}
+
+Instructions:
+1. Analyze the language of the text
+2. Respond with ONLY ONE WORD: either "SPANISH" or "ENGLISH"
+3. Do not provide any explanation or additional text
+"""
+        
+        try:
+            response = self._make_api_call(prompt, max_tokens=10)
+            response = response.strip().upper()
+            
+            if "SPANISH" in response:
+                return "SPANISH"
+            elif "ENGLISH" in response:
+                return "ENGLISH"
+            else:
+                return "UNKNOWN"
+                
+        except Exception as e:
+            print(f"언어 검증 오류: {e}")
+            return "UNKNOWN"
+    
+    def extract_spanish_content(self, text: str) -> str:
+        """
+        이중 언어 콘텐츠에서 스페인어 부분만 추출
+        영어와 스페인어가 섞인 팟캐스트에서 스페인어 부분만 분석하도록 함
+        """
+        if not text:
+            return ""
+        
+        # 스페인어 특징적인 단어들
+        spanish_indicators = [
+            'hola', 'queridos', 'amigos', 'bienvenidos', 'español', 'episodio',
+            'soy', 'desde', 'barcelona', 'reflexionamos', 'situación', 'dramática',
+            'mundo', 'entero', 'pandemia', 'coronavirus', 'que', 'está', 'pasando',
+            'nuestro', 'sobre', 'viviendo', 'raíz', 'del'
         ]
+        
+        # 텍스트를 문장 단위로 분할
+        sentences = text.split('.')
+        spanish_sentences = []
+        
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if len(sentence) < 10:  # 너무 짧은 문장 제외
+                continue
+            
+            # 각 문장에서 스페인어 특징 단어 개수 세기
+            spanish_word_count = 0
+            words = sentence.lower().split()
+            
+            for word in words:
+                # 구두점 제거
+                clean_word = word.strip('.,!?";:()[]')
+                if clean_word in spanish_indicators:
+                    spanish_word_count += 1
+            
+            # 스페인어 특징 단어가 2개 이상이면 스페인어 문장으로 간주
+            if spanish_word_count >= 2:
+                spanish_sentences.append(sentence)
+            # 특징 단어가 적어도 스페인어 문자가 있으면 포함
+            elif any(char in sentence for char in 'ñáéíóúü¿¡'):
+                spanish_sentences.append(sentence)
+        
+        # 스페인어 문장들을 다시 합치기
+        spanish_content = '. '.join(spanish_sentences)
+        
+        # 만약 추출된 내용이 너무 적으면 원본 텍스트 사용
+        if len(spanish_content.strip()) < 100:
+            print(f"    📝 스페인어 추출 결과가 부족해서 원본 텍스트 사용")
+            return text
+        
+        print(f"    📝 스페인어 콘텐츠 추출 완료: {len(spanish_content)}자")
+        return spanish_content
+    
+    def is_metadata_only(self, text: str) -> bool:
+        """
+        텍스트가 메타데이터만 포함하고 있는지 확인
+        실제 대화나 내용이 아닌 제목, 설명, 기술적 정보만 있는지 판단
+        """
+        if not text or len(text.strip()) < 50:
+            return True
+        
+        text_lower = text.lower()
+        
+        # 메타데이터 특징 키워드들
+        metadata_indicators = [
+            'podcast', 'episodio', 'episode', 'title', 'description',
+            'duration', 'fecha', 'date', 'published', 'autor', 'author',
+            'categoria', 'category', 'tags', 'subscribe', 'suscribirse',
+            'web:', 'website:', 'email:', 'twitter:', 'instagram:',
+            'available on', 'disponible en', 'spotify', 'apple podcasts',
+            'google podcasts', 'rss feed', 'feed rss'
+        ]
+        
+        # 실제 내용 특징 키워드들
+        content_indicators = [
+            'hola', 'bienvenidos', 'hoy vamos', 'en este episodio',
+            'quiero hablar', 'vamos a ver', 'como ya sabes',
+            'bueno', 'entonces', 'por ejemplo', 'además', 'también'
+        ]
+        
+        metadata_count = sum(1 for indicator in metadata_indicators if indicator in text_lower)
+        content_count = sum(1 for indicator in content_indicators if indicator in text_lower)
+        
+        # 메타데이터 특징이 많고 실제 내용 특징이 적으면 메타데이터로 판단
+        return metadata_count >= 3 and content_count <= 1
+    
+    def analyze_text_type(self, text: str) -> str:
+        """
+        텍스트 유형을 분석하여 구어체 표현 가능성을 예측
+        """
+        if not text:
+            return "빈 텍스트"
+        
+        text_lower = text.lower()
+        
+        # 대화체 특징
+        conversational_features = [
+            'hola', 'bueno', 'pues', 'entonces', 'o sea', 'sabes',
+            'verdad', 'claro', 'por cierto', 'a ver', 'vamos'
+        ]
+        
+        # 정식/공식 특징
+        formal_features = [
+            'según', 'mediante', 'por tanto', 'sin embargo', 'además',
+            'asimismo', 'por consiguiente', 'en consecuencia', 'no obstante'
+        ]
+        
+        # 설명문 특징
+        descriptive_features = [
+            'descripción', 'resumen', 'tema', 'sobre', 'acerca de',
+            'información', 'datos', 'estadísticas'
+        ]
+        
+        conv_score = sum(1 for feature in conversational_features if feature in text_lower)
+        formal_score = sum(1 for feature in formal_features if feature in text_lower)
+        desc_score = sum(1 for feature in descriptive_features if feature in text_lower)
+        
+        if conv_score >= 3:
+            return "대화체/비공식 (구어체 표현 가능성 높음)"
+        elif formal_score >= 2:
+            return "정식/공식적 (구어체 표현 가능성 낮음)"
+        elif desc_score >= 2:
+            return "설명문/메타데이터 (구어체 표현 가능성 매우 낮음)"
+        else:
+            return "혼합형 (구어체 표현 가능성 보통)"
+    
+    def predict_colloquial_likelihood(self, text: str) -> str:
+        """
+        텍스트에서 구어체 표현이 발견될 가능성을 예측
+        """
+        if not text:
+            return "없음 (빈 텍스트)"
+        
+        text_lower = text.lower()
+        
+        # 구어체 표현 지표들
+        colloquial_indicators = [
+            'bueno', 'pues', 'entonces', 'o sea', 'sabes', 'verdad',
+            'claro', 'por cierto', 'a ver', 'vamos', 'oye', 'mira',
+            'que tal', 'como va', 'vale', 'está bien', 'de acuerdo'
+        ]
+        
+        # 질문 형태 (구어체에서 흔함)
+        question_patterns = ['¿', '?', 'qué', 'cómo', 'dónde', 'cuándo', 'por qué']
+        
+        # 감탄사나 간투사
+        interjections = ['¡', '!', 'oh', 'ah', 'eh', 'uf', 'ay']
+        
+        colloquial_score = sum(1 for indicator in colloquial_indicators if indicator in text_lower)
+        question_score = sum(1 for pattern in question_patterns if pattern in text_lower)
+        interjection_score = sum(1 for interjection in interjections if interjection in text_lower)
+        
+        total_score = colloquial_score + question_score + interjection_score
+        
+        if total_score >= 5:
+            return "높음 (5+ 지표)"
+        elif total_score >= 3:
+            return "보통 (3-4 지표)"
+        elif total_score >= 1:
+            return "낮음 (1-2 지표)"
+        else:
+            return "매우 낮음 (0 지표)"
