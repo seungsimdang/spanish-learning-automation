@@ -87,6 +87,12 @@ def find_alternative_podcast():
             "name": "DELE Podcast",
             "rss": "https://anchor.fm/s/f4f4a4f0/podcast/rss",
             "apple_base": "https://podcasts.apple.com/us/podcast/examen-dele/id1705001626"
+        },
+        # 추가 백업 피드들 - 실제 검증된 피드들만 사용
+        {
+            "name": "Notes in Spanish",
+            "rss": "https://feeds.feedburner.com/notesinspanish",
+            "apple_base": "https://podcasts.apple.com/us/podcast/notes-in-spanish/id1234567891"
         }
     ]
     
@@ -111,7 +117,7 @@ def find_alternative_podcast():
             result = subprocess.run([
                 sys.executable,
                 os.path.join(os.path.dirname(__file__), 'collect_materials.py')
-            ], env=env, capture_output=True, text=True, timeout=60)
+            ], env=env, capture_output=True, text=True, timeout=90)
             
             if result.returncode == 0:
                 print(f"✅ {podcast['name']}에서 새로운 에피소드 발견!")

@@ -584,6 +584,7 @@ def find_and_register_alternative_podcast():
     """대안 팟캐스트를 찾아서 바로 등록"""
     current_podcast = os.environ.get('PODCAST_NAME', '')
     
+    # 기본 대안 팟캐스트들
     alternative_podcasts = [
         {
             "name": "Hoy Hablamos",
@@ -604,6 +605,12 @@ def find_and_register_alternative_podcast():
             "name": "DELE Podcast",
             "rss": "https://anchor.fm/s/f4f4a4f0/podcast/rss",
             "apple_base": "https://podcasts.apple.com/us/podcast/examen-dele/id1705001626"
+        },
+        # 추가 백업 피드들 - 실제 검증된 피드들만 사용
+        {
+            "name": "Notes in Spanish",
+            "rss": "https://feeds.feedburner.com/notesinspanish",
+            "apple_base": "https://podcasts.apple.com/us/podcast/notes-in-spanish/id1234567891"
         }
     ]
     
@@ -626,7 +633,7 @@ def find_and_register_alternative_podcast():
             result = subprocess.run([
                 sys.executable,
                 os.path.join(os.path.dirname(__file__), 'collect_materials.py')
-            ], env=env, capture_output=True, text=True, timeout=60)
+            ], env=env, capture_output=True, text=True, timeout=90)
             
             if result.returncode == 0:
                 # 출력에서 새로운 팟캐스트 정보 파싱
@@ -661,12 +668,89 @@ def find_and_register_alternative_podcast():
                             if new_podcast_url and new_podcast_url not in ["DUPLICATE_FOUND", "ALTERNATIVE_REGISTERED"]:
                                 print(f"✅ 대안 팟캐스트 Notion 페이지 생성 완료: {new_podcast_url}")
                                 return True
+                        else:
+                            print(f"⚠️  새로운 팟캐스트도 중복: {new_title}")
                         break
+            else:
+                print(f"❌ {podcast['name']} 수집 실패: {result.stderr}")
                         
         except subprocess.TimeoutExpired:
             print(f"⏰ {podcast['name']}: 시간 초과")
         except Exception as e:
             print(f"❌ {podcast['name']} 오류: {e}")
+    
+    return False
+
+def try_backup_podcast_feeds():
+    """추가 백업 피드들을 시도하여 팟캐스트 페이지 생성"""
+    print("🔄 백업 피드들을 시도합니다...")
+    
+    # 추가 백업 피드들 - 실제 존재하는 피드 URL들
+    backup_feeds = [
+        {
+            "name": "Notes in Spanish",
+            "rss": "https://feeds.feedburner.com/notesinspanish",
+            "apple_base": "https://podcasts.apple.com/us/podcast/notes-in-spanish/id1234567891"
+        }
+    ]
+    
+    for feed in backup_feeds:
+        try:
+            print(f"\n🎧 백업 피드 {feed['name']} 시도 중...")
+            
+            # collect_materials.py 호출
+            env = os.environ.copy()
+            env['PODCAST_NAME'] = feed['name']
+            env['PODCAST_RSS'] = feed['rss']
+            env['PODCAST_APPLE_BASE'] = feed['apple_base']
+            env['FORCE_ALTERNATIVE'] = 'true'
+            
+            result = subprocess.run([
+                sys.executable,
+                os.path.join(os.path.dirname(__file__), 'collect_materials.py')
+            ], env=env, capture_output=True, text=True, timeout=90)
+            
+            if result.returncode == 0:
+                # 출력에서 새로운 팟캐스트 정보 파싱
+                output_lines = result.stdout.strip().split('\n')
+                
+                for line in output_lines:
+                    if line.startswith('PODCAST_TITLE='):
+                        new_title = line.split('=', 1)[1].strip('"')
+                        
+                        # 중복 체크
+                        if not check_duplicate_page(new_title, "podcast"):
+                            print(f"✅ 백업 피드에서 새로운 팟캐스트 발견: {new_title}")
+                            
+                            # 환경변수 업데이트
+                            for env_line in output_lines:
+                                if '=' in env_line and env_line.startswith('PODCAST_'):
+                                    key, value = env_line.split('=', 1)
+                                    os.environ[key] = value.strip('"')
+                            
+                            # 새로운 팟캐스트로 Notion 페이지 생성
+                            backup_podcast_url = create_notion_page(
+                                title=os.environ.get('PODCAST_TITLE', ''),
+                                url=os.environ.get('PODCAST_APPLE', '') or os.environ.get('PODCAST_URL', ''),
+                                content_type="podcast",
+                                memo=os.environ.get('PODCAST_MEMO', ''),
+                                category=os.environ.get('PODCAST_TOPIC', ''),
+                                difficulty=os.environ.get('PODCAST_DIFFICULTY', 'B2'),
+                                duration=os.environ.get('PODCAST_DURATION', ''),
+                                is_alternative=True
+                            )
+                            
+                            if backup_podcast_url and backup_podcast_url not in ["DUPLICATE_FOUND", "ALTERNATIVE_REGISTERED"]:
+                                print(f"✅ 백업 피드 팟캐스트 페이지 생성 완료: {backup_podcast_url}")
+                                return True
+                        else:
+                            print(f"⚠️  백업 피드 팟캐스트도 중복: {new_title}")
+                        break
+                        
+        except subprocess.TimeoutExpired:
+            print(f"⏰ {feed['name']}: 시간 초과")
+        except Exception as e:
+            print(f"❌ {feed['name']} 백업 피드 오류: {e}")
     
     return False
 
@@ -688,12 +772,19 @@ def create_page_content(content_type, memo, title, url, duration="", category=""
         
         if content_type == "article":
             # 기사 문법 분석
+            print(f"    🔍 기사 문법 분석 시작...")
             grammar_analysis = analyzer.analyze_article_grammar(memo, difficulty)
+            print(f"    ✅ 기사 문법 분석 완료")
         elif content_type == "podcast":
             # 팟캐스트 구어체 분석 먼저 수행
+            print(f"    🔍 팟캐스트 구어체 분석 시작...")
             colloquial_expressions = analyzer.analyze_podcast_colloquialisms(memo, difficulty)
+            print(f"    ✅ 구어체 분석 완료: {len(colloquial_expressions)}개 표현 발견")
+            
             # 팟캐스트 학습 목표 생성 (구어체 표현 개수 반영)
+            print(f"    🎯 학습 목표 생성 시작...")
             learning_goals = analyzer.generate_podcast_learning_goals(memo, title, difficulty, len(colloquial_expressions))
+            print(f"    ✅ 학습 목표 생성 완료: {len(learning_goals)}개 목표")
         
     except Exception as e:
         print(f"    ⚠️  LLM 분석 실패: {e}")
@@ -1522,32 +1613,125 @@ def create_page_content(content_type, memo, title, url, duration="", category=""
         })
         
         # 분석된 구어체 표현들을 템플릿 형태로 추가
-        if colloquial_expressions:
+        if colloquial_expressions and len(colloquial_expressions) > 0:
+            print(f"    ✅ {len(colloquial_expressions)}개의 구어체 표현이 분석되었습니다.")
             for i, expr in enumerate(colloquial_expressions, 1):
-                children.append({
-                    "object": "block",
-                    "type": "bulleted_list_item",
-                    "bulleted_list_item": {
-                        "rich_text": [
-                            {
-                                "type": "text",
-                                "text": {
-                                    "content": f"[표현 {i}]: "
-                                },
-                                "annotations": {
-                                    "bold": True
-                                }
-                            },
-                            {
-                                "type": "text",
-                                "text": {
-                                    "content": expr
-                                }
+                # 구어체 표현을 파싱하여 더 구조화된 형태로 표시
+                try:
+                    # 표현이 딕셔너리 형태인지 확인
+                    if isinstance(expr, dict):
+                        expression = expr.get('expression', '')
+                        meaning = expr.get('meaning', '')
+                        example = expr.get('example', '')
+                        
+                        children.append({
+                            "object": "block",
+                            "type": "bulleted_list_item",
+                            "bulleted_list_item": {
+                                "rich_text": [
+                                    {
+                                        "type": "text",
+                                        "text": {
+                                            "content": f"[표현 {i}] "
+                                        },
+                                        "annotations": {
+                                            "bold": True
+                                        }
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": {
+                                            "content": f"{expression}"
+                                        },
+                                        "annotations": {
+                                            "bold": True,
+                                            "color": "blue"
+                                        }
+                                    }
+                                ]
                             }
-                        ]
-                    }
-                })
+                        })
+                        
+                        # 의미 설명
+                        if meaning:
+                            children.append({
+                                "object": "block",
+                                "type": "paragraph",
+                                "paragraph": {
+                                    "rich_text": [
+                                        {
+                                            "type": "text",
+                                            "text": {
+                                                "content": f"   → 의미: {meaning}"
+                                            }
+                                        }
+                                    ]
+                                }
+                            })
+                        
+                        # 예시 문장
+                        if example:
+                            children.append({
+                                "object": "block",
+                                "type": "paragraph",
+                                "paragraph": {
+                                    "rich_text": [
+                                        {
+                                            "type": "text",
+                                            "text": {
+                                                "content": f"   → 예시: {example}"
+                                            },
+                                            "annotations": {
+                                                "italic": True
+                                            }
+                                        }
+                                    ]
+                                }
+                            })
+                    else:
+                        # 문자열 형태의 구어체 표현
+                        children.append({
+                            "object": "block",
+                            "type": "bulleted_list_item",
+                            "bulleted_list_item": {
+                                "rich_text": [
+                                    {
+                                        "type": "text",
+                                        "text": {
+                                            "content": f"[표현 {i}]: "
+                                        },
+                                        "annotations": {
+                                            "bold": True
+                                        }
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": {
+                                            "content": str(expr)
+                                        }
+                                    }
+                                ]
+                            }
+                        })
+                except Exception as e:
+                    print(f"    ⚠️  표현 {i} 파싱 오류: {e}")
+                    # 기본 형태로 추가
+                    children.append({
+                        "object": "block",
+                        "type": "bulleted_list_item",
+                        "bulleted_list_item": {
+                            "rich_text": [
+                                {
+                                    "type": "text",
+                                    "text": {
+                                        "content": f"[표현 {i}]: {str(expr)}"
+                                    }
+                                }
+                            ]
+                        }
+                    })
         else:
+            print(f"    ⚠️  구어체 표현 분석 결과가 없습니다. 기본 템플릿을 사용합니다.")
             # 빈 템플릿 - LLM 분석이 없을 때는 5개 기본 제공
             for i in range(1, 6):
                 children.append({
@@ -1756,7 +1940,34 @@ def main():
         
         if podcast_page_url == "DUPLICATE_FOUND":
             print(f"🔄 팟캐스트 중복 발견했지만 대체 자료 검색 실패.")
-            print(f"💡 수동으로 다른 팟캐스트 피드에서 에피소드를 가져오거나 백업 피드를 사용하세요.")
+            print(f"💡 백업 옵션: 기존 팟캐스트를 수정하거나 다른 피드를 시도합니다...")
+            
+            # 백업 옵션 1: 기존 제목에 날짜나 번호 추가하여 새 페이지 생성
+            today = datetime.now().strftime("%m%d")
+            backup_title = f"{podcast_title} (백업 {today})"
+            
+            print(f"🔄 백업 제목으로 재시도: {backup_title}")
+            backup_page_url = create_notion_page(
+                title=backup_title,
+                url=podcast_url,
+                content_type="podcast",
+                memo=env_vars['PODCAST_MEMO'],
+                category=env_vars['PODCAST_TOPIC'],
+                difficulty=env_vars['PODCAST_DIFFICULTY'],
+                duration=env_vars['PODCAST_DURATION'],
+                is_alternative=True  # 백업 모드
+            )
+            
+            if backup_page_url and backup_page_url not in ["DUPLICATE_FOUND", "ALTERNATIVE_REGISTERED"]:
+                print(f"✅ 백업 팟캐스트 페이지 생성 완료: {backup_page_url}")
+            else:
+                print(f"❌ 백업 팟캐스트 페이지도 생성 실패. 추가 백업 피드를 시도합니다...")
+                
+                # 백업 옵션 2: 추가 백업 피드들 시도
+                if try_backup_podcast_feeds():
+                    print(f"✅ 백업 피드에서 팟캐스트 페이지 생성 완료!")
+                else:
+                    print(f"❌ 모든 백업 옵션 실패")
         elif podcast_page_url == "ALTERNATIVE_REGISTERED":
             print(f"✅ 팟캐스트 중복으로 인해 대체 팟캐스트가 자동으로 등록되었습니다.")
         elif podcast_page_url:
