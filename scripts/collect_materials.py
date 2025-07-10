@@ -558,26 +558,39 @@ def create_detailed_memo(content_type, data, weekday_name):
         expressions = []
         episode_url = data.get('url', '')
         
-        # 실제 transcript나 상세 내용 가져오기
-        print(f"\n  🔍 팟캐스트 콘텐츠 수집 시작")
-        print(f"  📺 에피소드: {episode_title}")
-        print(f"  🔗 원본 URL: {episode_url}")
-        
-        transcript_content = get_podcast_transcript_or_content(episode_url, episode_title)
-        
-        print(f"\n  📊 콘텐츠 수집 결과:")
-        print(f"  📏 수집된 콘텐츠 길이: {len(transcript_content) if transcript_content else 0}자")
-        
-        if transcript_content:
-            print(f"  ✅ 콘텐츠 수집 성공")
-            content_preview = transcript_content[:200].replace('\n', ' ').strip()
-            print(f"  � 콘텐츠 미리보기: {content_preview}...")
-            print(f"  🤖 구어체 표현 분석 시작...")
-            expressions = extract_vocabulary_expressions_from_transcript(transcript_content, difficulty)
+        # 이미 분석된 구어체 표현이 있는지 확인
+        if data.get('colloquial_analyzed') and data.get('colloquial_expressions'):
+            print(f"  ✅ 이미 분석된 구어체 표현 재사용 ({len(data['colloquial_expressions'])}개)")
+            expressions = data['colloquial_expressions']
         else:
-            print(f"  ❌ 콘텐츠 수집 실패 - 모든 소스에서 콘텐츠를 찾지 못함")
-            print(f"  📝 구어체 분석 건너뛰기 (콘텐츠 없음)")
-            expressions = []
+            # 실제 transcript나 상세 내용 가져오기
+            # 중복 콘텐츠 수집 방지 체크
+            skip_content_collection = os.environ.get('SKIP_DUPLICATE_CONTENT_COLLECTION', 'false').lower() == 'true'
+            
+            if skip_content_collection:
+                print(f"  ⏭️  중복 콘텐츠 수집 건너뛰기 (SKIP_DUPLICATE_CONTENT_COLLECTION=true)")
+                print(f"  📝 구어체 분석도 건너뛰기 (대안 검색 모드)")
+                expressions = []
+            else:
+                print(f"\n  🔍 팟캐스트 콘텐츠 수집 시작")
+                print(f"  📺 에피소드: {episode_title}")
+                print(f"  🔗 원본 URL: {episode_url}")
+                
+                transcript_content = get_podcast_transcript_or_content(episode_url, episode_title)
+                
+                print(f"\n  📊 콘텐츠 수집 결과:")
+                print(f"  📏 수집된 콘텐츠 길이: {len(transcript_content) if transcript_content else 0}자")
+                
+                if transcript_content:
+                    print(f"  ✅ 콘텐츠 수집 성공")
+                    content_preview = transcript_content[:200].replace('\n', ' ').strip()
+                    print(f"  � 콘텐츠 미리보기: {content_preview}...")
+                    print(f"  🤖 구어체 표현 분석 시작...")
+                    expressions = extract_vocabulary_expressions_from_transcript(transcript_content, difficulty)
+                else:
+                    print(f"  ❌ 콘텐츠 수집 실패 - 모든 소스에서 콘텐츠를 찾지 못함")
+                    print(f"  📝 구어체 분석 건너뛰기 (콘텐츠 없음)")
+                    expressions = []
         
         # Apple Podcast에서 정확한 URL을 찾았는지 확인
         found_apple_url = get_found_apple_url()
@@ -832,6 +845,207 @@ def try_alternative_podcast(alternatives, weekday_name):
             continue
     
     print("\n❌ 모든 대안 팟캐스트에서도 새로운 에피소드를 찾지 못했습니다.")
+    return None
+
+def find_alternative_episode_with_colloquialisms(current_podcast_data, verified_feeds, max_attempts=3):
+    """구어체 표현이 있는 대체 에피소드를 찾는 함수"""
+    current_title = current_podcast_data['title']
+    current_podcast_name = current_podcast_data['podcast_name'].replace(" (백업)", "").replace(" (대안)", "").strip()
+    
+    print(f"\n🔄 구어체 표현이 있는 다른 에피소드 검색 시작...")
+    print(f"   현재 에피소드: {current_title}")
+    print(f"   현재 팟캐스트: {current_podcast_name}")
+    
+    # 1. 먼저 같은 팟캐스트에서 다른 에피소드들 시도
+    current_feed_info = None
+    for name, info in verified_feeds.items():
+        if name == current_podcast_name:
+            current_feed_info = info
+            break
+    
+    if current_feed_info:
+        print(f"\n📡 {current_podcast_name}에서 다른 에피소드들 시도...")
+        
+        for attempt in range(max_attempts):
+            try:
+                print(f"\n🎧 시도 {attempt + 1}/{max_attempts}")
+                
+                feed = feedparser.parse(current_feed_info["rss"])
+                if not feed.entries:
+                    print(f"   ❌ 피드에 에피소드가 없음")
+                    break
+                
+                # 다른 에피소드 선택 (현재 것 제외)
+                import random
+                available_episodes = [ep for ep in feed.entries if ep.title != current_title]
+                if not available_episodes:
+                    print(f"   ❌ 다른 에피소드가 없음")
+                    break
+                
+                # 랜덤하게 다른 에피소드 선택
+                selected_episode = random.choice(available_episodes)
+                print(f"   📺 선택된 에피소드: {selected_episode.title}")
+                
+                # 구어체 분석을 위한 콘텐츠 수집
+                episode_url = selected_episode.link
+                print(f"   🔍 구어체 분석을 위한 콘텐츠 수집...")
+                transcript_content = get_podcast_transcript_or_content(episode_url, selected_episode.title)
+                
+                if transcript_content:
+                    print(f"   📊 콘텐츠 수집 성공 (길이: {len(transcript_content)}자)")
+                    
+                    # 구어체 분석 수행
+                    expressions = extract_vocabulary_expressions_from_transcript(transcript_content, current_podcast_data['difficulty'])
+                    
+                    if expressions and len(expressions) > 0:
+                        print(f"   🎯 구어체 표현 발견! ({len(expressions)}개)")
+                        for i, expr in enumerate(expressions, 1):
+                            print(f"      {i}. {expr}")
+                        
+                        # 새로운 팟캐스트 데이터 생성
+                        episode_number = extract_episode_number(selected_episode.title)
+                        duration = extract_duration_from_feed(selected_episode)
+                        topic = extract_topic_keywords(selected_episode.title, selected_episode.get('summary', ''))
+                        
+                        episode_link = selected_episode.link
+                        
+                        # Radio Ambulante인 경우 실제 웹사이트 URL 시도
+                        if 'Radio Ambulante' in current_podcast_name:
+                            radio_ambulante_url = extract_radio_ambulante_url(selected_episode)
+                            if radio_ambulante_url:
+                                episode_link = radio_ambulante_url
+                        
+                        # Apple Podcasts 링크 생성
+                        apple_link = generate_apple_podcast_link(current_podcast_name, current_feed_info["apple"], episode_link, episode_number, selected_episode.title)
+                        
+                        # 최종 URL 결정
+                        final_episode_url = episode_link
+                        if 'Radio Ambulante' in current_podcast_name:
+                            if apple_link != current_feed_info["apple"] and validate_url(apple_link):
+                                final_episode_url = apple_link
+                            else:
+                                final_episode_url = episode_link
+                                apple_link = current_feed_info["apple"]
+                        else:
+                            if not validate_url(episode_link):
+                                final_episode_url = apple_link if validate_url(apple_link) else current_feed_info["apple"]
+                            if not validate_url(apple_link):
+                                apple_link = current_feed_info["apple"]
+                        
+                        # 새로운 에피소드 난이도 분석
+                        episode_summary = selected_episode.get('summary', '')
+                        episode_difficulty = analyze_text_difficulty(episode_summary) if episode_summary else current_podcast_data['difficulty']
+                        
+                        new_podcast_data = {
+                            'title': selected_episode.title,
+                            'url': final_episode_url,
+                            'apple_link': apple_link,
+                            'published': selected_episode.get('published', ''),
+                            'duration': duration,
+                            'episode_number': episode_number or 'N/A',
+                            'topic': topic,
+                            'podcast_name': f"{current_podcast_name} (구어체 대안)",
+                            'summary': selected_episode.get('summary', '')[:200],
+                            'difficulty': episode_difficulty
+                        }
+                        
+                        print(f"   ✅ 구어체 표현이 있는 대체 에피소드 발견!")
+                        return new_podcast_data
+                    else:
+                        print(f"   📝 이 에피소드도 구어체 표현 부족")
+                else:
+                    print(f"   ❌ 콘텐츠 수집 실패")
+                    
+            except Exception as e:
+                print(f"   ❌ 시도 {attempt + 1} 오류: {e}")
+                continue
+    
+    # 2. 같은 팟캐스트에서 찾지 못하면 다른 팟캐스트들 시도
+    print(f"\n🔄 다른 팟캐스트들에서 구어체 표현이 있는 에피소드 검색...")
+    
+    for alt_name, alt_info in verified_feeds.items():
+        if alt_name == current_podcast_name:
+            continue
+            
+        try:
+            print(f"\n🎧 {alt_name} 시도 중...")
+            
+            feed = feedparser.parse(alt_info["rss"])
+            if not feed.entries:
+                print(f"   ❌ {alt_name}: 에피소드가 없음")
+                continue
+            
+            # 최근 몇 개 에피소드 확인
+            for episode in feed.entries[:3]:
+                print(f"   📺 에피소드 확인: {episode.title}")
+                
+                # 구어체 분석을 위한 콘텐츠 수집
+                episode_url = episode.link
+                transcript_content = get_podcast_transcript_or_content(episode_url, episode.title)
+                
+                if transcript_content:
+                    expressions = extract_vocabulary_expressions_from_transcript(transcript_content, current_podcast_data['difficulty'])
+                    
+                    if expressions and len(expressions) > 0:
+                        print(f"   🎯 {alt_name}에서 구어체 표현 발견! ({len(expressions)}개)")
+                        
+                        # 새로운 팟캐스트 데이터 생성
+                        episode_number = extract_episode_number(episode.title)
+                        duration = extract_duration_from_feed(episode)
+                        topic = extract_topic_keywords(episode.title, episode.get('summary', ''))
+                        
+                        episode_link = episode.link
+                        
+                        # Radio Ambulante인 경우 실제 웹사이트 URL 시도
+                        if 'Radio Ambulante' in alt_name:
+                            radio_ambulante_url = extract_radio_ambulante_url(episode)
+                            if radio_ambulante_url:
+                                episode_link = radio_ambulante_url
+                        
+                        # Apple Podcasts 링크 생성
+                        apple_link = generate_apple_podcast_link(alt_name, alt_info["apple"], episode_link, episode_number, episode.title)
+                        
+                        # 최종 URL 결정
+                        final_episode_url = episode_link
+                        if 'Radio Ambulante' in alt_name:
+                            if apple_link != alt_info["apple"] and validate_url(apple_link):
+                                final_episode_url = apple_link
+                            else:
+                                final_episode_url = episode_link
+                                apple_link = alt_info["apple"]
+                        else:
+                            if not validate_url(episode_link):
+                                final_episode_url = apple_link if validate_url(apple_link) else alt_info["apple"]
+                            if not validate_url(apple_link):
+                                apple_link = alt_info["apple"]
+                        
+                        # 새로운 에피소드 난이도 분석
+                        episode_summary = episode.get('summary', '')
+                        episode_difficulty = analyze_text_difficulty(episode_summary) if episode_summary else current_podcast_data['difficulty']
+                        
+                        new_podcast_data = {
+                            'title': episode.title,
+                            'url': final_episode_url,
+                            'apple_link': apple_link,
+                            'published': episode.get('published', ''),
+                            'duration': duration,
+                            'episode_number': episode_number or 'N/A',
+                            'topic': topic,
+                            'podcast_name': f"{alt_name} (구어체 대안)",
+                            'summary': episode.get('summary', '')[:200],
+                            'difficulty': episode_difficulty
+                        }
+                        
+                        print(f"   ✅ {alt_name}에서 구어체 표현이 있는 에피소드 발견!")
+                        return new_podcast_data
+                    else:
+                        print(f"   📝 이 에피소드도 구어체 표현 부족")
+                        
+        except Exception as e:
+            print(f"   ❌ {alt_name} 시도 중 오류: {e}")
+            continue
+    
+    print(f"\n❌ 모든 팟캐스트에서 구어체 표현이 있는 에피소드를 찾지 못함")
     return None
 
 # ==========================================
@@ -1166,7 +1380,7 @@ def try_extract_from_url(episode_url, episode_title):
             if elements:
                 content = ' '.join([elem.get_text().strip() for elem in elements])
                 if len(content) > 200:  # 일반 콘텐츠는 더 긴 텍스트만 허용
-                    print(f"    ✅ 일반 셀렉터에서 콘텐츠 발견! (셀렉터: {selector}, 길이: {len(content)}자)")
+                    print(f"    ✅ 일반 셀렉터에서 콘텐츠 발견! (길이: {len(content)}자)")
                     return content[:3000]
         
         # 4. 페이지의 모든 문단에서 스페인어 콘텐츠 필터링
@@ -1399,7 +1613,7 @@ def search_general_podcast_website(episode_url):
                 if elements:
                     content = ' '.join([elem.get_text().strip() for elem in elements])
                     if len(content) > 200:
-                        print(f"    ✅ 일반 팟캐스트 웹사이트에서 쇼노트 발견 (길이: {len(content)}자)")
+                        print(f"    ✅ 일반 팟캐스트 웹사이트에서 콘텐츠 발견 (길이: {len(content)}자)")
                         return content[:3000]
         
         return ""
@@ -1427,35 +1641,27 @@ def search_apple_podcast_description(episode_title):
             data = response.json()
             results = data.get('results', [])
             
-            print(f"    📊 iTunes Search 결과: {len(results)}개 에피소드 발견")
-            
-            for i, result in enumerate(results, 1):
-                result_title = result.get('trackName', '').lower()
+            for result in results:
+                track_name = result.get('trackName', '')
+                description = result.get('description', '')
                 track_view_url = result.get('trackViewUrl', '')
-                print(f"    📺 결과 {i}: {result.get('trackName', 'N/A')}")
                 
-                if any(word in result_title for word in episode_title.lower().split() if len(word) > 3):
-                    description = result.get('description', '') or result.get('longDescription', '')
-                    if description and len(description) > 200:
-                        print(f"    ✅ Apple Podcasts에서 에피소드 설명 발견 (길이: {len(description)}자)")
-                        print(f"    📄 설명 미리보기: {description[:150]}...")
+                # 제목 매칭 확인
+                if episode_title.lower() in track_name.lower() or track_name.lower() in episode_title.lower():
+                    if description and len(description) > 100:
+                        print(f"    ✅ iTunes에서 에피소드 설명 발견 (길이: {len(description)}자)")
                         
-                        # URL도 함께 저장 (전역 변수나 다른 방법으로)
+                        # 전역 변수에 발견된 Apple URL 저장
                         if track_view_url:
-                            print(f"    🔗 해당 에피소드 URL: {track_view_url}")
-                            # 전역 변수에 저장하여 나중에 사용
                             globals()['found_apple_url'] = track_view_url
+                            print(f"    🍎 Apple Podcast URL 저장: {track_view_url}")
                         
                         return description[:3000]
-                    else:
-                        print(f"    ⚠️ 설명이 너무 짧음 (길이: {len(description) if description else 0}자)")
-        else:
-            print(f"    ❌ iTunes Search API 호출 실패: {response.status_code}")
         
         return ""
         
     except Exception as e:
-        print(f"    ❌ Apple Podcasts 검색 오류: {e}")
+        print(f"    ❌ iTunes Search 오류: {e}")
         return ""
 
 def main():
@@ -1679,7 +1885,8 @@ def main():
                         backup_summary = latest.get('summary', '')
                         backup_difficulty = analyze_text_difficulty(backup_summary) if backup_summary else "B2"
                         
-                        podcast_data = {
+                        # 백업 피드 초기 데이터 생성
+                        backup_podcast_data = {
                             'title': latest.title,
                             'url': final_episode_url,
                             'apple_link': apple_link,
@@ -1694,6 +1901,40 @@ def main():
                         
                         print(f"✅ 백업 피드 성공! 사용된 피드: {backup_podcast_name}")
                         print(f"   에피소드: {latest.title}")
+                        
+                        # 🎯 백업 피드에서도 구어체 표현 분석 수행
+                        print(f"\n🔍 백업 피드 에피소드 구어체 표현 분석...")
+                        backup_transcript = get_podcast_transcript_or_content(final_episode_url, latest.title)
+                        
+                        backup_expressions = []
+                        if backup_transcript:
+                            print(f"📊 백업 에피소드 콘텐츠 수집 성공 (길이: {len(backup_transcript)}자)")
+                            backup_expressions = extract_vocabulary_expressions_from_transcript(backup_transcript, backup_difficulty)
+                        else:
+                            print(f"❌ 백업 에피소드 콘텐츠 수집 실패")
+                        
+                        # 백업 에피소드 구어체 표현 결과 처리
+                        if backup_expressions and len(backup_expressions) > 0:
+                            print(f"🎯 백업 에피소드에서 구어체 표현 발견! ({len(backup_expressions)}개)")
+                            podcast_data = backup_podcast_data
+                        else:
+                            print(f"📝 백업 에피소드도 구어체 표현 0개")
+                            print(f"🔄 백업 피드에서 구어체 표현이 있는 대안 검색...")
+                            
+                            # 백업 피드에서도 구어체 표현이 있는 대안 찾기
+                            backup_alternative = find_alternative_episode_with_colloquialisms(
+                                backup_podcast_data,
+                                verified_spanish_feeds
+                            )
+                            
+                            if backup_alternative:
+                                print(f"✅ 백업 피드에서 구어체 대안 에피소드 발견!")
+                                podcast_data = backup_alternative
+                            else:
+                                print(f"⚠️ 백업 피드에서도 구어체 대안을 찾지 못함")
+                                backup_podcast_data['podcast_name'] = f"{backup_podcast_name} (백업 - 구어체 0개)"
+                                podcast_data = backup_podcast_data
+                        
                         break
                     else:
                         print(f"🚫 {backup_podcast_name} 피드에서 에피소드를 찾을 수 없음")
@@ -1766,7 +2007,8 @@ def main():
             episode_summary = latest.get('summary', '')
             podcast_difficulty = analyze_text_difficulty(episode_summary) if episode_summary else "B2"
             
-            podcast_data = {
+            # 초기 팟캐스트 데이터 생성
+            initial_podcast_data = {
                 'title': latest.title,
                 'url': final_episode_url,
                 'apple_link': apple_link,
@@ -1780,6 +2022,62 @@ def main():
             }
             
             print(f"✅ 메인 피드에서 에피소드 선택 완료!")
+            
+            # 🎯 구어체 표현 분석 수행 (중복 체크와 상관없이 항상 실행)
+            # 중복 콘텐츠 수집 방지 체크
+            skip_content_collection = os.environ.get('SKIP_DUPLICATE_CONTENT_COLLECTION', 'false').lower() == 'true'
+            
+            if skip_content_collection:
+                print(f"\n⏭️  중복 콘텐츠 수집 건너뛰기 (SKIP_DUPLICATE_CONTENT_COLLECTION=true)")
+                print(f"📝 구어체 분석도 건너뛰기 (대안 검색 모드)")
+                expressions = []
+            else:
+                print(f"\n🔍 구어체 표현 분석 시작...")
+                transcript_content = get_podcast_transcript_or_content(final_episode_url, latest.title)
+                
+                expressions = []
+                if transcript_content:
+                    print(f"📊 콘텐츠 수집 성공 (길이: {len(transcript_content)}자)")
+                    expressions = extract_vocabulary_expressions_from_transcript(transcript_content, podcast_difficulty)
+                else:
+                    print(f"❌ 콘텐츠 수집 실패")
+            
+            # 구어체 표현 결과에 따른 처리
+            if expressions and len(expressions) > 0:
+                print(f"🎯 구어체 표현 발견! ({len(expressions)}개)")
+                print(f"   발견된 표현들: {', '.join(expressions)}")
+                
+                # 구어체 표현이 있으면 현재 에피소드를 그대로 사용
+                podcast_data = initial_podcast_data
+                # 구어체 표현을 데이터에 저장 (중복 분석 방지)
+                podcast_data['colloquial_expressions'] = expressions
+                podcast_data['colloquial_analyzed'] = True
+                print(f"✅ 현재 에피소드 사용 - 구어체 표현이 충분함")
+                
+                # 구어체 표현이 충분히 발견되었음을 표시하는 환경변수 설정
+                os.environ['SUFFICIENT_COLLOQUIAL_FOUND'] = 'true'
+                
+            else:
+                print(f"📝 구어체 표현이 0개 발견됨")
+                print(f"🔄 구어체 표현이 있는 대안 에피소드 검색 시작...")
+                
+                # 구어체 표현이 없으면 대안 에피소드 찾기
+                alternative_episode = find_alternative_episode_with_colloquialisms(
+                    initial_podcast_data, 
+                    verified_spanish_feeds
+                )
+                
+                if alternative_episode:
+                    print(f"✅ 구어체 표현이 있는 대안 에피소드 발견!")
+                    print(f"   대안 에피소드: {alternative_episode['title']}")
+                    print(f"   팟캐스트: {alternative_episode['podcast_name']}")
+                    podcast_data = alternative_episode
+                else:
+                    print(f"⚠️ 구어체 표현이 있는 대안 에피소드를 찾지 못함")
+                    print(f"   백업으로 원본 에피소드 사용 (구어체 표현 0개)")
+                    # 백업임을 표시
+                    initial_podcast_data['podcast_name'] = f"{podcast_name} (백업 - 구어체 0개)"
+                    podcast_data = initial_podcast_data
             
             # 대안 모드에서는 중복 체크를 건너뛰고 바로 진행
             if not force_alternative:
@@ -1835,6 +2133,18 @@ def main():
             print(f'PODCAST_TOPIC="{podcast_data["topic"]}"')
             print(f'PODCAST_MEMO="{create_detailed_memo("podcast", podcast_data, weekday_name)}"')
         print("=========================================")
+
+    # 단일 모드에서는 하나만 수집 후 즉시 종료
+    single_episode_mode = os.environ.get('SINGLE_EPISODE_MODE', 'false').lower() == 'true'
+    single_article_mode = os.environ.get('SINGLE_ARTICLE_MODE', 'false').lower() == 'true'
+    
+    if single_episode_mode and podcast_data:
+        print("🔄 단일 에피소드 모드: 팟캐스트 수집 완료 후 즉시 종료")
+        return
+    
+    if single_article_mode and article_data:
+        print("🔄 단일 기사 모드: 기사 수집 완료 후 즉시 종료")
+        return
 
     print("학습 자료 수집 완료!")
     if article_data:

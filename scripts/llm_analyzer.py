@@ -122,22 +122,24 @@ You are analyzing Spanish text to find ACTUAL colloquial expressions that appear
 CRITICAL RULE: Only extract expressions that are ACTUALLY PRESENT in the provided text. Do not suggest or create expressions that are not in the text.
 
 Text to analyze:
-{transcript}
+{spanish_transcript}
 
 Instructions:
-1. Read the text carefully
-2. Look for actual colloquial expressions, informal phrases, or conversational elements that appear in the text
-3. If the text is formal and contains no colloquial expressions, return "NO_COLLOQUIAL_EXPRESSIONS_FOUND"
-4. If you find expressions, format them as: "expression" → Korean translation (usage context)
+1. Read the text carefully and identify any words, phrases, or expressions that show informal/conversational Spanish
+2. Look for language that is characteristic of spoken Spanish rather than formal written Spanish
+3. Find expressions that native speakers would use in casual conversation, everyday situations, or informal contexts
+4. Include informal vocabulary, conversational connectors, colloquial phrases, everyday expressions, and any language that shows a relaxed, natural speaking style
+5. If the text is formal and contains no colloquial expressions, return "NO_COLLOQUIAL_EXPRESSIONS_FOUND"
 
-Examples of what to look for (ONLY if they actually appear in the text):
-- Conversational fillers: o sea, bueno, pues, entonces
-- Question tags: verdad, no, sabes
-- Informal transitions: por cierto, a proposito, ademas
-- Opinion expressions: me parece que, creo que, la cosa es que
+What makes an expression colloquial:
+- Words or phrases commonly used in everyday conversation
+- Informal alternatives to more formal expressions
+- Conversational fillers, connectors, or transitions
+- Casual ways of expressing opinions, emotions, or reactions
+- Language that sounds natural and spontaneous rather than scripted or formal
 
-Response format (only if expressions are found in the text):
-- "actual_expression_from_text" → Korean meaning (context)
+Response format (only if expressions are found):
+- "expression" → Korean meaning
 
 If no colloquial expressions are found in this formal text, respond with: NO_COLLOQUIAL_EXPRESSIONS_FOUND
 """
