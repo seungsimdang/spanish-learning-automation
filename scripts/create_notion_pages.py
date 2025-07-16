@@ -950,25 +950,104 @@ def extract_colloquial_expressions_from_memo(memo):
         if '분석 결과 0개 발견' in colloquial_text or '0개 발견' in colloquial_text:
             return []
         
-        # 각 표현을 분리 (| 또는 , 로 구분)
-        raw_expressions = re.split(r'\s*[\|,]\s*', colloquial_text)
-        
-        for expr in raw_expressions:
-            expr = expr.strip()
-            if not expr or len(expr) < 3:
-                continue
+        # 더 정교한 표현 분리 로직
+        expressions = parse_colloquial_expressions(colloquial_text)
+    
+    return expressions
+
+def parse_colloquial_expressions(text):
+    """구어체 표현 텍스트를 정교하게 파싱"""
+    expressions = []
+    
+    # 먼저 | 로 기본 분리 시도
+    raw_parts = re.split(r'\s*\|\s*', text)
+    
+    for part in raw_parts:
+        part = part.strip()
+        if not part or len(part) < 3:
+            continue
             
-            # 각 표현에서 의미 부분 추출
-            if '(' in expr and ')' in expr:
-                # "expression (meaning)" 형태
-                expression_match = re.match(r'([^(]+)\s*\(([^)]+)\)', expr)
-                if expression_match:
-                    spanish_expr = expression_match.group(1).strip()
-                    korean_meaning = expression_match.group(2).strip()
-                    expressions.append(f"{spanish_expr} ({korean_meaning})")
-            else:
-                # 괄호가 없는 경우 그대로 사용
-                expressions.append(expr)
+        # 각 부분에서 스페인어(한글) 패턴 찾기
+        cleaned_expressions = extract_spanish_korean_pairs(part)
+        expressions.extend(cleaned_expressions)
+    
+    # 중복 제거 및 정리
+    unique_expressions = []
+    seen = set()
+    
+    for expr in expressions:
+        expr_key = expr.lower().strip()
+        if expr_key not in seen and len(expr.strip()) > 2:
+            unique_expressions.append(expr.strip())
+            seen.add(expr_key)
+    
+    return unique_expressions
+
+def extract_spanish_korean_pairs(text):
+    """텍스트에서 스페인어(한글) 패턴들을 추출"""
+    expressions = []
+    
+    # 패턴 1: 완전한 형태 "스페인어 (한글)"
+    complete_pattern = r'([a-zA-ZáéíóúñüÁÉÍÓÚÑÜ¡¿!.,\s]+?)\s*\(([^)]+)\)'
+    complete_matches = re.findall(complete_pattern, text)
+    
+    for spanish, korean in complete_matches:
+        spanish = spanish.strip()
+        korean = korean.strip()
+        
+        # 유효한 스페인어인지 확인 (최소 2글자 이상, 스페인어 문자 포함)
+        if len(spanish) >= 2 and re.search(r'[a-zA-ZáéíóúñüÁÉÍÓÚÑÜ]', spanish):
+            # 불필요한 문자 제거
+            spanish = re.sub(r'^[^\w¡¿áéíóúñüÁÉÍÓÚÑÜ]+|[^\w!?áéíóúñüÁÉÍÓÚÑÜ]+$', '', spanish)
+            if spanish:
+                expressions.append(f"{spanish} ({korean})")
+    
+    # 패턴 2: 분리된 형태 처리 (괄호가 떨어져 있는 경우)
+    if not complete_matches:
+        # 스페인어 부분들을 찾고
+        spanish_parts = re.findall(r'[a-zA-ZáéíóúñüÁÉÍÓÚÑÜ¡¿!.,\s]{2,}', text)
+        # 한글 부분들을 찾기
+        korean_parts = re.findall(r'\(([^)]*[가-힣][^)]*)\)', text)
+        
+        # 개수가 맞으면 매칭
+        if len(spanish_parts) == len(korean_parts):
+            for spanish, korean in zip(spanish_parts, korean_parts):
+                spanish = spanish.strip()
+                korean = korean.strip()
+                
+                if len(spanish) >= 2 and korean:
+                    spanish = re.sub(r'^[^\w¡¿áéíóúñüÁÉÍÓÚÑÜ]+|[^\w!?áéíóúñüÁÉÍÓÚÑÜ]+$', '', spanish)
+                    if spanish:
+                        expressions.append(f"{spanish} ({korean})")
+    
+    # 패턴 3: 개별 처리가 필요한 복잡한 경우
+    if not expressions:
+        # 텍스트를 더 세밀하게 분석
+        # 예: "¡Pero que morro tienes tío! (너 진짜 뻔뻔하다 친구!)"
+        
+        # 스페인어 감탄사나 표현들 찾기
+        spanish_expr_patterns = [
+            r'¡[^!]+!',  # ¡로 시작해서 !로 끝나는 감탄문
+            r'¿[^?]+\?',  # ¿로 시작해서 ?로 끝나는 의문문
+            r'\b[a-zA-ZáéíóúñüÁÉÍÓÚÑÜ]{2,}(?:\s+[a-zA-ZáéíóúñüÁÉÍÓÚÑÜ]+)*\b'  # 일반 스페인어 단어들
+        ]
+        
+        potential_spanish = []
+        for pattern in spanish_expr_patterns:
+            matches = re.findall(pattern, text)
+            potential_spanish.extend(matches)
+        
+        # 한글 의미들 찾기
+        korean_meanings = re.findall(r'\(([^)]*[가-힣][^)]*)\)', text)
+        
+        # 가장 긴 스페인어 표현과 의미 매칭
+        if potential_spanish and korean_meanings:
+            # 가장 긴 스페인어 표현 선택
+            longest_spanish = max(potential_spanish, key=len).strip()
+            first_korean = korean_meanings[0].strip()
+            
+            if longest_spanish and first_korean:
+                expressions.append(f"{longest_spanish} ({first_korean})")
     
     return expressions
 
